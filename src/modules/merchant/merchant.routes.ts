@@ -18,13 +18,17 @@ router.get('/store', merchantController.getStore);
 router.put('/store', merchantController.updateStore);
 router.put('/store/status', merchantController.updateStatus);
 
-// Categories (Create/Read are in menuController currently, but we can map them here for the requested structure)
-// The existing menu controller takes merchantId from body for create, but RESTfully it should be tied to the auth user.
-// For simplicity matching the prompt, we map the extensions.
+// Categories
+router.get('/categories', merchantController.getCategories);
+router.post('/categories', merchantController.createCategory);
 router.delete('/categories/:id', merchantController.deleteCategory);
 router.put('/categories/:id', merchantController.updateCategory);
 
+// Catalog / Menu view
+router.get('/catalog', merchantController.getCatalog);
+
 // Products
+router.post('/products', merchantController.createProduct);
 router.delete('/products/:id', merchantController.deleteProduct);
 router.put('/products/:id/availability', merchantController.updateProductAvailability);
 

@@ -125,7 +125,52 @@ export class MerchantController {
         }
     }
 
-    // --- Product / Category Extensions (Deleting and updating) ---
+    // --- Product / Category Extensions (Adding, Deleting and updating) ---
+    async getCategories(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(userId);
+            if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
+
+            const categories = await merchantService.getCategories(result.data.id);
+            return sendResponse(res, 200, true, 'Categories fetched', categories);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async getCatalog(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(userId);
+            if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
+
+            const catalog = await merchantService.getCatalog(result.data.id);
+            return sendResponse(res, 200, true, 'Catalog fetched', catalog);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async createCategory(req: AuthRequest, res: Response) {
+        try {
+            const { name, description } = req.body;
+            if (!name) return sendResponse(res, 400, false, 'Category name is required');
+
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(userId);
+            if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
+
+            const category = await merchantService.createCategory(result.data.id, name, description);
+            return sendResponse(res, 201, true, 'Category created', category);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
     async deleteCategory(req: AuthRequest, res: Response) {
         try {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
@@ -145,6 +190,25 @@ export class MerchantController {
             const result = await merchantService.getMerchantByUserId(userId);
             const category = await merchantService.updateCategory(result.data.id, req.params.id as string, req.body);
             return sendResponse(res, 200, true, 'Category updated', category);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async createProduct(req: AuthRequest, res: Response) {
+        try {
+            const { name, price, category_id, image_url } = req.body;
+            if (!name || !price || !category_id) {
+                return sendResponse(res, 400, false, 'Name, price, and category_id are required');
+            }
+
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(userId);
+            if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
+
+            const product = await merchantService.createProduct(result.data.id, req.body);
+            return sendResponse(res, 201, true, 'Product created', product);
         } catch (error: any) {
             return sendResponse(res, 500, false, error.message);
         }

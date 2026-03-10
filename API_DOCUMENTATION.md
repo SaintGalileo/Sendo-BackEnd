@@ -224,12 +224,11 @@ A single merchant role governs both Restaurants and Grocery stores. Merchants re
 - `PUT /api/merchant/store/status` : Set store strictly to `open`, `closed`, or `busy`. (Requires Role: `merchant`)
 
 **Category & Product Management**
-- `POST /api/merchant/categories` *(mapped to /api/menu/category)*
-- `PUT /api/merchant/categories/:id`
-- `DELETE /api/merchant/categories/:id`
-- `POST /api/merchant/products` *(mapped to /api/menu/product)*
-- `PUT /api/merchant/products/:id/availability` : Toggle product on/off.
-- `DELETE /api/merchant/products/:id`
+- `GET /api/merchant/categories` : List all categories for the logged-in merchant.
+- `GET /api/merchant/catalog` : Fetch full menu (categories + products) for the merchant.
+- `POST /api/merchant/categories` : Create a new category.
+- `PUT /api/merchant/products/:id/availability` : Toggle product on/off. (Body: `{ "is_available": boolean }`)
+- `DELETE /api/merchant/products/:id` : Remove a product.
 
 **Merchant Orders**
 - `GET /api/merchant/orders` : Fetch incoming/active store orders.

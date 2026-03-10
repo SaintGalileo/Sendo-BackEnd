@@ -110,12 +110,54 @@ export class MerchantOnboardingService {
     }
 
     // --- Products Integration (Enhancing Menu Service functionality) ---
+    async getCategories(merchantId: string) {
+        const { data, error } = await supabase
+            .from('categories')
+            .select('*')
+            .eq('merchant_id', merchantId);
+
+        if (error) throw new Error(error.message);
+        return data;
+    }
+
+    async getCatalog(merchantId: string) {
+        const { data, error } = await supabase
+            .from('categories')
+            .select('*, products(*)')
+            .eq('merchant_id', merchantId);
+
+        if (error) throw new Error(error.message);
+        return data;
+    }
+
+    async createCategory(merchantId: string, name: string, description?: string) {
+        const { data, error } = await supabase
+            .from('categories')
+            .insert([{ merchant_id: merchantId, name, description }])
+            .select()
+            .single();
+
+        if (error) throw new Error(error.message);
+        return data;
+    }
+
     async updateProductAvailability(merchantId: string, productId: string, isAvailable: boolean) {
         const { data, error } = await supabase
             .from('products')
             .update({ is_available: isAvailable }) // assuming 'is_available' column exists
             .eq('id', productId)
             .eq('merchant_id', merchantId)
+            .select()
+            .single();
+
+        if (error) throw new Error(error.message);
+        return data;
+    }
+
+    async createProduct(merchantId: string, productData: any) {
+        const { data, error } = await supabase
+            .from('products')
+            .insert([{ ...productData, merchant_id: merchantId }])
             .select()
             .single();
 
