@@ -59,11 +59,23 @@ export class AuthController {
             storeName,
             merchantType,
             address,
+            city,
+            state,
+            postalCode,
+            country,
             latitude,
             longitude,
-            storePhone,
-            imageUrl,
-            email
+            contactPhone,
+            contactEmail,
+            logoUri,
+            bannerUri,
+            openingTime,
+            closingTime,
+            activeDays,
+            offDays,
+            isPickupOnly,
+            deliveryRadius,
+            email // This is for the user account email
         } = req.body || {};
 
         if (!registrationToken || !firstName || !lastName || !storeName || !merchantType) {
@@ -77,10 +89,22 @@ export class AuthController {
             storeName,
             merchantType,
             address,
+            city,
+            state,
+            postalCode,
+            country,
             latitude,
             longitude,
-            storePhone,
-            imageUrl,
+            contactPhone,
+            contactEmail,
+            logoUri,
+            bannerUri,
+            openingTime,
+            closingTime,
+            activeDays,
+            offDays,
+            isPickupOnly,
+            deliveryRadius,
             email
         );
         return res.status(result.success ? 201 : 400).json(result);

@@ -194,10 +194,22 @@ export class AuthService {
         storeName: string,
         merchantType: string,
         address?: string,
+        city?: string,
+        state?: string,
+        postalCode?: string,
+        country?: string,
         latitude?: number,
         longitude?: number,
-        storePhone?: string,
-        imageUrl?: string,
+        contactPhone?: string,
+        contactEmail?: string,
+        logoUri?: string,
+        bannerUri?: string,
+        openingTime?: string,
+        closingTime?: string,
+        activeDays: string[] = [],
+        offDays?: string[],
+        isPickupOnly: boolean = false,
+        deliveryRadius: number = 0,
         email?: string
     ): Promise<{ success: boolean; message: string; data?: any; token?: string }> {
         const decoded = this.verifyRegistrationToken(registrationToken);
@@ -219,21 +231,48 @@ export class AuthService {
         }
 
         // Handle Merchant Creation
-        const { error: merchantError } = await supabase
+        const { data: merchantData, error: merchantError } = await supabase
             .from('merchants')
             .insert([{
                 user_id: newUser.id,
+                first_name: firstName,
+                last_name: lastName,
                 name: storeName,
                 type: merchantType,
+                phone: contactPhone || decoded.phone,
+                contact_email: contactEmail || email,
                 address,
+                city,
+                state,
+                postal_code: postalCode,
+                country,
                 latitude,
                 longitude,
-                phone: storePhone || decoded.phone,
-                image_url: imageUrl
-            }]);
+                logo_url: logoUri,
+                banner_url: bannerUri,
+                opening_time: openingTime,
+                closing_time: closingTime,
+                active_days: activeDays,
+                off_days: offDays,
+                is_pickup_only: isPickupOnly,
+                delivery_radius: deliveryRadius
+            }])
+            .select()
+            .single();
 
-        if (merchantError) console.error('Error creating merchant sub-profile:', merchantError);
+        if (merchantError) {
+            console.error('Error creating merchant sub-profile:', merchantError);
+            return { success: false, message: `Failed to create merchant profile: ${merchantError.message}` };
+        }
 
-        return { success: true, message: 'Merchant registration successful', data: newUser, token: this.generateAuthToken(newUser) };
+        return {
+            success: true,
+            message: 'Merchant registration successful',
+            data: {
+                user: newUser,
+                merchant: merchantData
+            },
+            token: this.generateAuthToken(newUser)
+        };
     }
 }
