@@ -1,0 +1,179 @@
+import { Request, Response } from 'express';
+import { MerchantOnboardingService } from './merchant.service';
+import { AuthRequest } from '../../common/middleware/auth.middleware';
+import { sendResponse } from '../../common/utils/response';
+import { getPaginationOptions, formatPaginatedResponse } from '../../common/utils/pagination';
+
+const merchantService = new MerchantOnboardingService();
+
+export class MerchantController {
+    // --- Store Management ---
+    async registerStore(req: Request, res: Response) {
+        try {
+            // Note: Registration often doesn't need to be strictly authenticated beforehand if it's the first step for a new merchant, 
+            // but for Sendo we usually require someone to create an account first. Assuming `req.user.id` is passed if authenticated, or available in body.
+            // Let's assume it accepts body parameters matching the previous specialized controllers.
+            const { userId, name, type, address, latitude, longitude, phone, image_url } = req.body;
+
+            if (!userId || !name || !type || !address || !latitude || !longitude || !phone) {
+                return sendResponse(res, 400, false, 'userId, name, type (restaurant/grocery), address, latitude, longitude, and phone are required');
+            }
+
+            if (!['restaurant', 'grocery'].includes(type)) {
+                return sendResponse(res, 400, false, 'Invalid type. Must be restaurant or grocery');
+            }
+
+            const result = await merchantService.registerMerchant(
+                userId as string,
+                name as string,
+                type as 'restaurant' | 'grocery',
+                address as string,
+                latitude as number,
+                longitude as number,
+                phone as string,
+                image_url as string | undefined
+            );
+            if (!result.success) return sendResponse(res, 500, false, result.message || 'Failed to register store');
+
+            return sendResponse(res, 201, true, 'Store registered successfully', result.data);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async getStore(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id as string;
+            const result = await merchantService.getMerchantByUserId(userId);
+            if (!result.success) return sendResponse(res, 404, false, result.message || 'Error fetching store');
+            return sendResponse(res, 200, true, 'Store fetched', result.data);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async updateStore(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id as string;
+            const result = await merchantService.getMerchantByUserId(userId);
+            if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
+
+            const store = await merchantService.updateStore(result.data.id, req.body);
+            return sendResponse(res, 200, true, 'Store updated', store);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async updateStatus(req: AuthRequest, res: Response) {
+        try {
+            const { status } = req.body;
+            if (!status) return sendResponse(res, 400, false, 'Status is required');
+
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(userId);
+            if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
+
+            const store = await merchantService.updateStatus(result.data.id, status);
+            return sendResponse(res, 200, true, 'Store status updated', store);
+        } catch (error: any) {
+            return sendResponse(res, 400, false, error.message);
+        }
+    }
+
+    // --- Product / Category Extensions (Deleting and updating) ---
+    async deleteCategory(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(userId);
+            const success = await merchantService.deleteCategory(result.data.id, req.params.id as string);
+            return sendResponse(res, 200, true, 'Category deleted');
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async updateCategory(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(userId);
+            const category = await merchantService.updateCategory(result.data.id, req.params.id as string, req.body);
+            return sendResponse(res, 200, true, 'Category updated', category);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async deleteProduct(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(userId);
+            await merchantService.deleteProduct(result.data.id, req.params.id as string);
+            return sendResponse(res, 200, true, 'Product deleted');
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    // Usually PUT /merchant/products/:id/availability
+    async updateProductAvailability(req: AuthRequest, res: Response) {
+        try {
+            const { is_available } = req.body;
+            if (is_available === undefined) return sendResponse(res, 400, false, 'is_available is required');
+
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(userId);
+            const product = await merchantService.updateProductAvailability(result.data.id, req.params.id as string, is_available);
+            return sendResponse(res, 200, true, 'Product availability updated', product);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    // --- Orders ---
+    async getOrders(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(userId);
+            const pagination = getPaginationOptions(req.query);
+            const orders = await merchantService.getOrders(result.data.id, pagination);
+            return sendResponse(res, 200, true, 'Orders fetched', formatPaginatedResponse(orders.data, orders.totalCount, pagination.page, pagination.limit));
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async getOrderById(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id as string;
+            const result = await merchantService.getMerchantByUserId(userId);
+            const order = await merchantService.getOrderById(result.data.id, req.params.id as string);
+            return sendResponse(res, 200, true, 'Order fetched', order);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async updateOrderStatus(req: AuthRequest, res: Response) {
+        try {
+            const { status } = req.body;
+            // E.g., handling accept, reject, ready from routes by injecting the status
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(userId);
+            const order = await merchantService.updateOrderStatus(result.data.id, req.params.id as string, status);
+            return sendResponse(res, 200, true, `Order status updated to ${status}`, order);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+}
