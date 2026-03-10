@@ -110,8 +110,14 @@ export class MerchantController {
 
     async updateStatus(req: AuthRequest, res: Response) {
         try {
-            const { status } = req.body;
-            if (!status) return sendResponse(res, 400, false, 'Status is required');
+            // Support multiple field names for flexibility (status, is_online, or online)
+            const status = req.body.status !== undefined ? req.body.status :
+                req.body.is_online !== undefined ? req.body.is_online :
+                    req.body.online;
+
+            if (status === undefined || status === null) {
+                return sendResponse(res, 400, false, 'Status is required');
+            }
 
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
