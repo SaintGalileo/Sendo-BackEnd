@@ -117,7 +117,35 @@ export class AuthService {
             { expiresIn: '30d' }
         );
 
-        return { success: true, message: 'Authentication successful', data: userData, token, isNewUser: false };
+        // Fetch sub-profile data if applicable
+        let subProfileData = null;
+        if (userData.role === 'merchant') {
+            const { data: merchant } = await supabase
+                .from('merchants')
+                .select('*')
+                .eq('user_id', userData.id)
+                .single();
+            subProfileData = merchant;
+        } else if (userData.role === 'courier') {
+            const { data: courier } = await supabase
+                .from('couriers')
+                .select('*')
+                .eq('user_id', userData.id)
+                .single();
+            subProfileData = courier;
+        }
+
+        return {
+            success: true,
+            message: 'Authentication successful',
+            data: {
+                ...userData,
+                merchant: userData.role === 'merchant' ? subProfileData : undefined,
+                courier: userData.role === 'courier' ? subProfileData : undefined,
+            },
+            token,
+            isNewUser: false
+        };
     }
 
     // --- NEW REGISTRATION METHODS ---

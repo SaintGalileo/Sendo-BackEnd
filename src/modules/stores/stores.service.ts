@@ -1,4 +1,5 @@
 import { supabase } from '../../config/supabase';
+import { isMerchantAvailable } from '../../common/utils/helpers';
 
 export class StoresService {
     async getStores(filters: any, pagination: any) {
@@ -22,16 +23,14 @@ export class StoresService {
         const to = from + pagination.limit - 1;
         query = query.range(from, to);
 
-        // Sorting / Nearest logic could go here if POSTGIS is enabled in supabase, 
-        // fallback to simpler sorting if not. Supabase has an ST_Distance function that can run via RPC, 
-        // but for now we'll just handle basic filtering.
-
         const { data, count, error } = await query;
         if (error) throw new Error(error.message);
 
-        // Simple distance calculation in JS if lat/lng are provided (not ideal for large datasets, 
-        // but sufficient for a basic implementation without PostGIS RPC)
-        let stores = data || [];
+        let stores = (data || []).map(store => ({
+            ...store,
+            is_available: isMerchantAvailable(store)
+        }));
+
         if (filters.lat && filters.lng) {
             stores = this.sortByDistance(stores, parseFloat(filters.lat), parseFloat(filters.lng));
         }

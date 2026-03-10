@@ -93,14 +93,23 @@ export class MerchantOnboardingService {
         return data;
     }
 
-    async updateStatus(merchantId: string, status: string) {
-        if (!['open', 'closed', 'busy'].includes(status)) {
-            throw new Error('Invalid status. Must be open, closed, or busy.');
+    async updateStatus(merchantId: string, status: string | boolean) {
+        let updateData: any = {};
+
+        if (typeof status === 'boolean') {
+            updateData = { is_online: status };
+        } else {
+            if (!['open', 'closed', 'busy', 'online', 'offline'].includes(status)) {
+                throw new Error('Invalid status. Must be open, closed, busy, online, or offline.');
+            }
+            // If the user hasn't added a 'status' column yet, they should use 'is_online' boolean
+            // But we'll try to update 'status' if a string is provided.
+            updateData = { status };
         }
 
         const { data, error } = await supabase
             .from('merchants')
-            .update({ status }) // assuming 'status' column exists in merchants table
+            .update(updateData)
             .eq('id', merchantId)
             .select()
             .single();
