@@ -25,14 +25,14 @@
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "joi": "^18.0.2",
-    "jsonwebtoken": "^9.0.3"
-  },
-  "devDependencies": {
+    "jsonwebtoken": "^9.0.3",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^25.3.5",
-    "ts-node-dev": "^2.0.0",
     "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "ts-node-dev": "^2.0.0"
   }
 }
