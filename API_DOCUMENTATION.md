@@ -75,7 +75,33 @@ After receiving `isNewUser: true` and the `registrationToken` from Step 2, hit t
 
 **Merchant:**
 - **POST** `/api/auth/register-merchant`
-- **Body**: `{ registrationToken: string, firstName: string, lastName: string, storeName: string, merchantType: 'restaurant' | 'grocery', address?: string, latitude?: number, longitude?: number, storePhone?: string, imageUrl?: string, email?: string }`
+- **Body**: 
+  ```json
+  {
+    "registrationToken": "string",
+    "firstName": "string",
+    "lastName": "string",
+    "storeName": "string",
+    "merchantType": "restaurant | grocery",
+    "address": "string",
+    "city": "string",
+    "state": "string",
+    "postalCode": "string",
+    "country": "string",
+    "latitude": 0,
+    "longitude": 0,
+    "contactPhone": "string",
+    "contactEmail": "string",
+    "logoUri": "string",
+    "bannerUri": "string (optional)",
+    "openingTime": "string (optional)",
+    "closingTime": "string (optional)",
+    "activeDays": "string[] (optional)",
+    "offDays": "string[] (optional)",
+    "isPickupOnly": "boolean (optional)",
+    "deliveryRadius": "number (optional)"
+  }
+  ```
 - **Response**: `{ success: true, token: string, data: User }`
 
 ---
@@ -163,8 +189,36 @@ Requires Role: `consumer`
 A single merchant role governs both Restaurants and Grocery stores. Merchants register under a unified store system.
 
 **Store Management**
-- `POST /api/merchant/register` : Onboard a new merchant store. (Body: `{ userId, name, type, address, latitude, longitude, phone, image_url }`)
-  - `type` must strictly be either `'restaurant'` or `'grocery'`
+- `POST /api/merchant/register` : Onboard a new merchant store.
+  - **Body**:
+    ```json
+    {
+      "userId": "string",
+      "firstName": "string",
+      "lastName": "string",
+      "shopName": "string",
+      "businessType": "restaurant | grocery",
+      "description": "string",
+      "contactPhone": "string",
+      "contactEmail": "string",
+      "address": "string",
+      "city": "string",
+      "state": "string",
+      "postalCode": "string",
+      "country": "string",
+      "latitude": 0,
+      "longitude": 0,
+      "logoUri": "string",
+      "bannerUri": "string (optional)",
+      "openingTime": "string (optional)",
+      "closingTime": "string (optional)",
+      "activeDays": "string[] (optional)",
+      "offDays": "string[] (optional)",
+      "isPickupOnly": "boolean (optional)",
+      "deliveryRadius": "number (optional)"
+    }
+    ```
+  - `businessType` must strictly be either `'restaurant'` or `'grocery'`
 - `GET /api/merchant/store` : View store configuration. (Requires Role: `merchant`)
 - `PUT /api/merchant/store` : Update configurations. (Requires Role: `merchant`)
 - `PUT /api/merchant/store/status` : Set store strictly to `open`, `closed`, or `busy`. (Requires Role: `merchant`)

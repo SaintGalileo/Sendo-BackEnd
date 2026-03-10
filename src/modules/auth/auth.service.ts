@@ -154,7 +154,10 @@ export class AuthService {
             .select()
             .single();
 
-        if (createError) return { success: false, message: 'Failed to create consumer' };
+        if (createError) {
+            console.error('Error creating consumer profile:', createError);
+            return { success: false, message: `Failed to create consumer: ${createError.message}` };
+        }
 
         return { success: true, message: 'Registration successful', data: newUser, token: this.generateAuthToken(newUser) };
     }
@@ -169,7 +172,10 @@ export class AuthService {
             .select()
             .single();
 
-        if (createError) return { success: false, message: 'Failed to create courier user profile' };
+        if (createError) {
+            console.error('Error creating courier user profile:', createError);
+            return { success: false, message: `Failed to create courier user profile: ${createError.message}` };
+        }
 
         // Handle Courier Creation
         const { error: courierError } = await supabase
@@ -207,7 +213,10 @@ export class AuthService {
             .select()
             .single();
 
-        if (createError) return { success: false, message: 'Failed to create merchant user profile' };
+        if (createError) {
+            console.error('Error creating merchant user profile:', createError);
+            return { success: false, message: `Failed to create merchant user profile: ${createError.message}` };
+        }
 
         // Handle Merchant Creation
         const { error: merchantError } = await supabase
