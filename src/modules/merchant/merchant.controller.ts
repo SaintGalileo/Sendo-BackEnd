@@ -10,28 +10,69 @@ export class MerchantController {
     // --- Store Management ---
     async registerStore(req: Request, res: Response) {
         try {
-            // Note: Registration often doesn't need to be strictly authenticated beforehand if it's the first step for a new merchant, 
-            // but for Sendo we usually require someone to create an account first. Assuming `req.user.id` is passed if authenticated, or available in body.
-            // Let's assume it accepts body parameters matching the previous specialized controllers.
-            const { userId, name, type, address, latitude, longitude, phone, image_url } = req.body;
+            const {
+                userId,
+                firstName,
+                lastName,
+                shopName,
+                businessType,
+                description,
+                contactPhone,
+                contactEmail,
+                address,
+                city,
+                state,
+                postalCode,
+                country,
+                latitude,
+                longitude,
+                logoUri,
+                bannerUri,
+                openingTime,
+                closingTime,
+                activeDays,
+                offDays,
+                isPickupOnly,
+                deliveryRadius
+            } = req.body;
 
-            if (!userId || !name || !type || !address || !latitude || !longitude || !phone) {
-                return sendResponse(res, 400, false, 'userId, name, type (restaurant/grocery), address, latitude, longitude, and phone are required');
+            if (
+                !userId || !firstName || !lastName || !shopName || !businessType ||
+                !description || !contactPhone || !contactEmail || !address ||
+                !city || !state || !postalCode || !country || !latitude ||
+                !longitude || !logoUri
+            ) {
+                return sendResponse(res, 400, false, 'All fields except bannerUri, offDays, openingTime, closingTime are required for account completion');
             }
 
-            if (!['restaurant', 'grocery'].includes(type)) {
-                return sendResponse(res, 400, false, 'Invalid type. Must be restaurant or grocery');
+            if (!['restaurant', 'grocery'].includes(businessType)) {
+                return sendResponse(res, 400, false, 'Invalid businessType. Must be restaurant or grocery');
             }
 
             const result = await merchantService.registerMerchant(
-                userId as string,
-                name as string,
-                type as 'restaurant' | 'grocery',
-                address as string,
-                latitude as number,
-                longitude as number,
-                phone as string,
-                image_url as string | undefined
+                userId,
+                firstName,
+                lastName,
+                shopName,
+                businessType as 'restaurant' | 'grocery',
+                description,
+                contactPhone,
+                contactEmail,
+                address,
+                city,
+                state,
+                postalCode,
+                country,
+                latitude,
+                longitude,
+                logoUri,
+                bannerUri,
+                openingTime,
+                closingTime,
+                activeDays,
+                offDays,
+                isPickupOnly,
+                deliveryRadius
             );
             if (!result.success) return sendResponse(res, 500, false, result.message || 'Failed to register store');
 

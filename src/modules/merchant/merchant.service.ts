@@ -1,19 +1,58 @@
 import { supabase } from '../../config/supabase';
 
 export class MerchantOnboardingService {
-    async registerMerchant(userId: string, name: string, type: 'restaurant' | 'grocery', address: string, latitude: number, longitude: number, phone: string, image_url?: string) {
+    async registerMerchant(
+        userId: string,
+        firstName: string,
+        lastName: string,
+        shopName: string,
+        type: 'restaurant' | 'grocery',
+        description: string,
+        contactPhone: string,
+        contactEmail: string,
+        address: string,
+        city: string,
+        state: string,
+        postalCode: string,
+        country: string,
+        latitude: number,
+        longitude: number,
+        logoUrl: string,
+        bannerUrl?: string,
+        openingTime?: string,
+        closingTime?: string,
+        activeDays: string[] = [],
+        offDays?: string[],
+        isPickupOnly: boolean = false,
+        deliveryRadius: number = 0
+    ) {
         const { data, error } = await supabase
             .from('merchants')
             .insert([
                 {
                     user_id: userId,
-                    name,
+                    first_name: firstName,
+                    last_name: lastName,
+                    name: shopName,
                     type,
+                    description,
+                    phone: contactPhone,
+                    contact_email: contactEmail,
                     address,
+                    city,
+                    state,
+                    postal_code: postalCode,
+                    country,
                     latitude,
                     longitude,
-                    phone,
-                    image_url,
+                    logo_url: logoUrl,
+                    banner_url: bannerUrl,
+                    opening_time: openingTime,
+                    closing_time: closingTime,
+                    active_days: activeDays,
+                    off_days: offDays,
+                    is_pickup_only: isPickupOnly,
+                    delivery_radius: deliveryRadius,
                 },
             ])
             .select()
