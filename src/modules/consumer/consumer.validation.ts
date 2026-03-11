@@ -7,10 +7,10 @@ export const updateProfileSchema = Joi.object({
 
 export const createAddressSchema = Joi.object({
     title: Joi.string().required(),
-    address_line: Joi.string().required(),
+    address: Joi.string().required(),
     city: Joi.string().required(),
     state: Joi.string().required(),
-    zip_code: Joi.string().optional(),
+    postal_code: Joi.string().optional(),
     latitude: Joi.number().optional(),
     longitude: Joi.number().optional(),
     is_default: Joi.boolean().optional(),
@@ -18,10 +18,10 @@ export const createAddressSchema = Joi.object({
 
 export const updateAddressSchema = Joi.object({
     title: Joi.string().optional(),
-    address_line: Joi.string().optional(),
+    address: Joi.string().optional(),
     city: Joi.string().optional(),
     state: Joi.string().optional(),
-    zip_code: Joi.string().optional(),
+    postal_code: Joi.string().optional(),
     latitude: Joi.number().optional(),
     longitude: Joi.number().optional(),
     is_default: Joi.boolean().optional(),
