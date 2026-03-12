@@ -24,7 +24,9 @@ export class MerchantOnboardingService {
         activeDays: string[] = [],
         offDays?: string[],
         isPickupOnly: boolean = false,
-        deliveryRadius: number = 0
+        deliveryRadius: number = 0,
+        preparationTime: string = '15-25',
+        deliveryFee: number = 0
     ) {
         const { data, error } = await supabase
             .from('merchants')
@@ -53,6 +55,8 @@ export class MerchantOnboardingService {
                     off_days: offDays,
                     is_pickup_only: isPickupOnly,
                     delivery_radius: deliveryRadius,
+                    preparation_time: preparationTime,
+                    delivery_fee: deliveryFee
                 },
             ])
             .select()

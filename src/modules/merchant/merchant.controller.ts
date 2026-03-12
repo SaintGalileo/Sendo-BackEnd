@@ -33,7 +33,9 @@ export class MerchantController {
                 activeDays,
                 offDays,
                 isPickupOnly,
-                deliveryRadius
+                deliveryRadius,
+                preparationTime,
+                deliveryFee
             } = req.body;
 
             if (
@@ -72,7 +74,9 @@ export class MerchantController {
                 activeDays,
                 offDays,
                 isPickupOnly,
-                deliveryRadius
+                deliveryRadius,
+                preparationTime,
+                deliveryFee
             );
             if (!result.success) return sendResponse(res, 500, false, result.message || 'Failed to register store');
 

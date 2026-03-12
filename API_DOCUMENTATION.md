@@ -99,7 +99,9 @@ After receiving `isNewUser: true` and the `registrationToken` from Step 2, hit t
     "activeDays": "string[] (optional)",
     "offDays": "string[] (optional)",
     "isPickupOnly": "boolean (optional)",
-    "deliveryRadius": "number (optional)"
+    "deliveryRadius": "number (optional)",
+    "preparationTime": "string (e.g. '15-25 min', optional)",
+    "deliveryFee": "number (0 for free, optional)"
   }
   ```
 - **Response**: `{ success: true, token: string, data: User }`
@@ -218,7 +220,9 @@ A single merchant role governs both Restaurants and Grocery stores. Merchants re
       "activeDays": "string[] (optional)",
       "offDays": "string[] (optional)",
       "isPickupOnly": "boolean (optional)",
-      "deliveryRadius": "number (optional)"
+      "deliveryRadius": "number (optional)",
+      "preparationTime": "string (e.g. '15-25 min', optional)",
+      "deliveryFee": "number (0 for free, optional)"
     }
     ```
   - `businessType` must strictly be either `'restaurant'` or `'grocery'`

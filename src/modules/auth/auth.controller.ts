@@ -76,6 +76,8 @@ export class AuthController {
             offDays,
             isPickupOnly,
             deliveryRadius,
+            preparationTime,
+            deliveryFee,
             email // This is for the user account email
         } = req.body || {};
 
@@ -107,6 +109,8 @@ export class AuthController {
             offDays,
             isPickupOnly,
             deliveryRadius,
+            preparationTime,
+            deliveryFee,
             email
         );
         return res.status(result.success ? 201 : 400).json(result);

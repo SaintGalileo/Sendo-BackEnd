@@ -239,6 +239,8 @@ export class AuthService {
         offDays?: string[],
         isPickupOnly: boolean = false,
         deliveryRadius: number = 0,
+        preparationTime: string = '15-25',
+        deliveryFee: number = 0,
         email?: string
     ): Promise<{ success: boolean; message: string; data?: any; token?: string }> {
         const decoded = this.verifyRegistrationToken(registrationToken);
@@ -285,7 +287,9 @@ export class AuthService {
                 active_days: activeDays,
                 off_days: offDays,
                 is_pickup_only: isPickupOnly,
-                delivery_radius: deliveryRadius
+                delivery_radius: deliveryRadius,
+                preparation_time: preparationTime,
+                delivery_fee: deliveryFee
             }])
             .select()
             .single();
