@@ -128,7 +128,10 @@ Requires Role: `consumer`
 ## Store Discovery (Consumer App)
 *Prefix: `/api/stores`*
 
-- `GET /api/stores` : Fetch all stores. Supports paging and filters (`?type=restaurant`, `?lat=&lng=`, `?rating=`).
+- `GET /api/stores` : Fetch all stores. Supports paging and filters (`?type=restaurant`, `?lat=&lng=`, `?rating=`, `?city=`).
+- `GET /api/stores/nearby` : Fetch restaurants near the user's default delivery address. (Requires Auth)
+- `GET /api/stores/featured` : Fetch a shuffled selection of featured restaurants.
+- `GET /api/stores/city` : Fetch all restaurants in the user's default delivery address city. (Requires Auth)
 - `GET /api/stores/search` : Search stores (e.g. `?q=pizza`).
 - `GET /api/stores/:storeId` : Get single store profile.
 - `GET /api/stores/:storeId/menu` : Fetch structured menu categories and nested products for a store.

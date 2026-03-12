@@ -13,6 +13,10 @@ export class StoresService {
             query = query.gte('rating', parseFloat(filters.rating));
         }
 
+        if (filters.city) {
+            query = query.ilike('city', `%${filters.city}%`);
+        }
+
         // Search logic
         if (filters.search) {
             query = query.ilike('name', `%${filters.search}%`);
@@ -36,6 +40,71 @@ export class StoresService {
         }
 
         return { data: stores, totalCount: count || 0 };
+    }
+
+    async getNearbyStores(userId: string, pagination: any) {
+        const { data: address, error: addrError } = await supabase
+            .from('addresses')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('is_default', true)
+            .single();
+
+        if (addrError || !address) {
+            throw new Error('Default address not found. Please set a delivery address.');
+        }
+
+        const filters = {
+            lat: address.latitude?.toString(),
+            lng: address.longitude?.toString(),
+            type: 'restaurant'
+        };
+
+        return this.getStores(filters, pagination);
+    }
+
+    async getFeaturedStores(pagination: any) {
+        // Fetch a pool of restaurants to shuffle
+        const { data, count, error } = await supabase
+            .from('merchants')
+            .select('*', { count: 'exact' })
+            .eq('type', 'restaurant')
+            .limit(50);
+
+        if (error) throw new Error(error.message);
+
+        // Shuffle in-memory
+        const shuffled = (data || []).sort(() => Math.random() - 0.5);
+        
+        // Paginate shuffle results
+        const from = pagination.offset;
+        const to = from + pagination.limit;
+        const paged = shuffled.slice(from, to).map(store => ({
+            ...store,
+            is_available: isMerchantAvailable(store)
+        }));
+
+        return { data: paged, totalCount: count || 0 };
+    }
+
+    async getStoresByCity(userId: string, pagination: any) {
+        const { data: address, error: addrError } = await supabase
+            .from('addresses')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('is_default', true)
+            .single();
+
+        if (addrError || !address) {
+            throw new Error('Default address not found. Please set a delivery address.');
+        }
+
+        const filters = {
+            city: address.city,
+            type: 'restaurant'
+        };
+
+        return this.getStores(filters, pagination);
     }
 
     async getStoreById(storeId: string) {
