@@ -14,7 +14,8 @@ export const createAddressSchema = Joi.object({
     latitude: Joi.number().optional(),
     longitude: Joi.number().optional(),
     is_default: Joi.boolean().optional(),
-});
+    user_id: Joi.string().optional(),
+}).unknown(true);
 
 export const updateAddressSchema = Joi.object({
     title: Joi.string().optional(),
@@ -25,4 +26,5 @@ export const updateAddressSchema = Joi.object({
     latitude: Joi.number().optional(),
     longitude: Joi.number().optional(),
     is_default: Joi.boolean().optional(),
-});
+    user_id: Joi.string().optional(),
+}).unknown(true);
