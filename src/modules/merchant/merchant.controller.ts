@@ -291,4 +291,78 @@ export class MerchantController {
             return sendResponse(res, 500, false, error.message);
         }
     }
+
+    // --- Product Extras (Add-ons) ---
+    async createExtraGroup(req: AuthRequest, res: Response) {
+        try {
+            const { productId } = req.params;
+            const { title, is_required, selection_type } = req.body;
+
+            if (!title) return sendResponse(res, 400, false, 'Group title is required');
+
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(userId);
+
+            const group = await merchantService.createExtraGroup(result.data.id, productId as string, {
+                title,
+                is_required,
+                selection_type
+            });
+
+            return sendResponse(res, 201, true, 'Extra group created', group);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async deleteExtraGroup(req: AuthRequest, res: Response) {
+        try {
+            const { id } = req.params;
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(userId);
+
+            await merchantService.deleteExtraGroup(result.data.id, id as string);
+            return sendResponse(res, 200, true, 'Extra group deleted');
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async addExtraOption(req: AuthRequest, res: Response) {
+        try {
+            const { groupId } = req.params;
+            const { name, price } = req.body;
+
+            if (!name) return sendResponse(res, 400, false, 'Option name is required');
+
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(userId);
+
+            const option = await merchantService.addExtraOption(result.data.id, groupId as string, {
+                name,
+                price
+            });
+
+            return sendResponse(res, 201, true, 'Extra option added', option);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async deleteExtraOption(req: AuthRequest, res: Response) {
+        try {
+            const { id } = req.params;
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(userId);
+
+            await merchantService.deleteExtraOption(result.data.id, id as string);
+            return sendResponse(res, 200, true, 'Extra option deleted');
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
 }

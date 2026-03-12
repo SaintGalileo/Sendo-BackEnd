@@ -32,6 +32,12 @@ router.post('/products', merchantController.createProduct);
 router.delete('/products/:id', merchantController.deleteProduct);
 router.put('/products/:id/availability', merchantController.updateProductAvailability);
 
+// Product Extras
+router.post('/products/:productId/extra-groups', merchantController.createExtraGroup);
+router.delete('/extra-groups/:id', merchantController.deleteExtraGroup);
+router.post('/extra-groups/:groupId/options', merchantController.addExtraOption);
+router.delete('/extra-options/:id', merchantController.deleteExtraOption);
+
 // Orders
 router.get('/orders', merchantController.getOrders);
 router.get('/orders/:id', merchantController.getOrderById);

@@ -253,4 +253,95 @@ export class MerchantOnboardingService {
         if (error) throw new Error(error.message);
         return data;
     }
+
+    // --- Product Extras (Add-ons) Management ---
+    async createExtraGroup(merchantId: string, productId: string, groupData: any) {
+        // Verify merchant owns the product
+        const { data: product, error: pError } = await supabase
+            .from('products')
+            .select('id')
+            .eq('id', productId)
+            .eq('merchant_id', merchantId)
+            .single();
+        
+        if (pError || !product) throw new Error('Product not found or access denied');
+
+        const { data, error } = await supabase
+            .from('product_extra_groups')
+            .insert([{ ...groupData, product_id: productId }])
+            .select()
+            .single();
+
+        if (error) throw new Error(error.message);
+        return data;
+    }
+
+    async deleteExtraGroup(merchantId: string, groupId: string) {
+        // Verify merchant owns the product associated with this group
+        const { data: group, error: gError } = await supabase
+            .from('product_extra_groups')
+            .select('product_id, products(merchant_id)')
+            .eq('id', groupId)
+            .single();
+
+        if (gError || !group) throw new Error('Extra group not found');
+        
+        // This check depends on how supabase returns joined data, 
+        // usually it's group.products.merchant_id
+        const groupMerchantId = (group.products as any)?.merchant_id;
+        if (groupMerchantId !== merchantId) throw new Error('Access denied');
+
+        const { error } = await supabase
+            .from('product_extra_groups')
+            .delete()
+            .eq('id', groupId);
+
+        if (error) throw new Error(error.message);
+        return true;
+    }
+
+    async addExtraOption(merchantId: string, groupId: string, optionData: any) {
+        // Verify merchant owns the extra group
+        const { data: group, error: gError } = await supabase
+            .from('product_extra_groups')
+            .select('id, products(merchant_id)')
+            .eq('id', groupId)
+            .single();
+
+        if (gError || !group) throw new Error('Extra group not found');
+        
+        const groupMerchantId = (group.products as any)?.merchant_id;
+        if (groupMerchantId !== merchantId) throw new Error('Access denied');
+
+        const { data, error } = await supabase
+            .from('product_extra_options')
+            .insert([{ ...optionData, extra_group_id: groupId }])
+            .select()
+            .single();
+
+        if (error) throw new Error(error.message);
+        return data;
+    }
+
+    async deleteExtraOption(merchantId: string, optionId: string) {
+        // Verify merchant owns the extra group associated with this option
+        const { data: option, error: oError } = await supabase
+            .from('product_extra_options')
+            .select('extra_group_id, product_extra_groups(products(merchant_id))')
+            .eq('id', optionId)
+            .single();
+
+        if (oError || !option) throw new Error('Extra option not found');
+        
+        const optionMerchantId = (option.product_extra_groups as any)?.products?.merchant_id;
+        if (optionMerchantId !== merchantId) throw new Error('Access denied');
+
+        const { error } = await supabase
+            .from('product_extra_options')
+            .delete()
+            .eq('id', optionId);
+
+        if (error) throw new Error(error.message);
+        return true;
+    }
 }

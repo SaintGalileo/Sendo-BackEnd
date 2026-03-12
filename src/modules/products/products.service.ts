@@ -4,7 +4,15 @@ export class ProductsService {
     async getProductById(productId: string) {
         const { data, error } = await supabase
             .from('products')
-            .select('*, category:categories(*), merchant:merchants(*), extras(*)')
+            .select(`
+                *,
+                category:categories(*),
+                merchant:merchants(*),
+                extra_groups:product_extra_groups(
+                    *,
+                    options:product_extra_options(*)
+                )
+            `)
             .eq('id', productId)
             .single();
 
