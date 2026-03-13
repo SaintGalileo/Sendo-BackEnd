@@ -1,8 +1,12 @@
 import { supabase } from '../../config/supabase';
 import { OrderStatus } from '../../common/constants/orderStatus';
 import { CartService } from '../cart/cart.service';
+import { WalletService } from '../payments/wallet.service';
+import { SocketService } from '../notifications/socket.service';
 
 const cartService = new CartService();
+const walletService = new WalletService();
+const socketService = SocketService.getInstance();
 
 export class OrdersService {
     async createOrder(userId: string, data: any) {
@@ -29,8 +33,17 @@ export class OrdersService {
             };
         });
 
-        const deliveryFee = data.deliveryFee || 5.00; // Flat fee or calculate dynamically
+        const deliveryFee = data.deliveryFee || 5.00;
         const totalAmount = subtotal + deliveryFee;
+        const paymentMethod = data.paymentMethod || 'wallet';
+
+        // If wallet payment, check balance first
+        if (paymentMethod === 'wallet') {
+            const wallet = await walletService.getOrCreateWallet(userId);
+            if (wallet.balance < totalAmount) {
+                throw new Error('Insufficient wallet balance');
+            }
+        }
 
         // 1. Create the order
         const { data: order, error: orderError } = await supabase
@@ -44,22 +57,75 @@ export class OrdersService {
                 total_amount: totalAmount,
                 status: OrderStatus.PENDING,
                 notes: data.notes || '',
+                payment_method: paymentMethod,
+                payment_status: paymentMethod === 'wallet' ? 'paid' : 'pending'
             }])
             .select()
             .single();
 
         if (orderError) throw new Error(orderError.message);
 
-        // 2. Insert order items
+        // 2. Debit wallet if applicable
+        if (paymentMethod === 'wallet') {
+            await walletService.debit(userId, totalAmount, order.id);
+        }
+
+        // 3. Insert order items
         const itemsToInsert = orderItemsData.map((item: any) => ({ ...item, order_id: order.id }));
         const { error: itemsError } = await supabase.from('order_items').insert(itemsToInsert);
 
         if (itemsError) throw new Error(itemsError.message);
 
-        // 3. Clear cart
+        // 4. Clear cart
         await cartService.clearCart(userId);
 
+        // 5. Notify Merchant via WebSocket
+        socketService.emitToMerchant(merchantId, 'new_order', order);
+
         return order;
+    }
+
+    async acceptOrder(merchantId: string, orderId: string) {
+        const { data, error } = await supabase
+            .from('orders')
+            .update({ status: OrderStatus.ACCEPTED })
+            .eq('id', orderId)
+            .eq('merchant_id', merchantId)
+            .select()
+            .single();
+
+        if (error) throw new Error(error.message);
+
+        // Notify User
+        socketService.emitToUser(data.user_id, 'order_status_changed', data);
+
+        return data;
+    }
+
+    async declineOrder(merchantId: string, orderId: string, reason?: string) {
+        const order = await supabase.from('orders').select('*').eq('id', orderId).single();
+        if (order.error) throw new Error(order.error.message);
+
+        const { data, error } = await supabase
+            .from('orders')
+            .update({ status: OrderStatus.CANCELLED, notes: reason ? `${order.data.notes}\nDecline Reason: ${reason}` : order.data.notes })
+            .eq('id', orderId)
+            .eq('merchant_id', merchantId)
+            .select()
+            .single();
+
+        if (error) throw new Error(error.message);
+
+        // If paid via wallet, refund the user
+        if (order.data.payment_method === 'wallet' && order.data.payment_status === 'paid') {
+            await walletService.credit(order.data.user_id, order.data.total_amount, `Refund for declined order ${orderId}`);
+            await supabase.from('orders').update({ payment_status: 'refunded' }).eq('id', orderId);
+        }
+
+        // Notify User
+        socketService.emitToUser(data.user_id, 'order_status_changed', data);
+
+        return data;
     }
 
     async getOrders(userId: string, pagination: any) {

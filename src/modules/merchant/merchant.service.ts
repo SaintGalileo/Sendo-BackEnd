@@ -1,4 +1,7 @@
 import { supabase } from '../../config/supabase';
+import { SocketService } from '../notifications/socket.service';
+
+const socketService = SocketService.getInstance();
 
 export class MerchantOnboardingService {
     async registerMerchant(
@@ -251,6 +254,10 @@ export class MerchantOnboardingService {
             .single();
 
         if (error) throw new Error(error.message);
+
+        // Notify User
+        socketService.emitToUser(data.user_id, 'order_status_changed', data);
+
         return data;
     }
 

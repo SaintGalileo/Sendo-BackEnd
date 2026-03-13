@@ -1,10 +1,14 @@
 import { Request, Response } from 'express';
 import { MerchantOnboardingService } from './merchant.service';
+import { OrdersService } from '../orders/orders.service';
+import { MerchantEarningsService } from './earnings.service';
 import { AuthRequest } from '../../common/middleware/auth.middleware';
 import { sendResponse } from '../../common/utils/response';
 import { getPaginationOptions, formatPaginatedResponse } from '../../common/utils/pagination';
 
 const merchantService = new MerchantOnboardingService();
+const ordersService = new OrdersService();
+const earningsService = new MerchantEarningsService();
 
 export class MerchantController {
     // --- Store Management ---
@@ -281,12 +285,62 @@ export class MerchantController {
     async updateOrderStatus(req: AuthRequest, res: Response) {
         try {
             const { status } = req.body;
-            // E.g., handling accept, reject, ready from routes by injecting the status
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(userId);
+            if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
+
             const order = await merchantService.updateOrderStatus(result.data.id, req.params.id as string, status);
+            
+            // If delivered, update earnings
+            if (status === 'delivered') {
+                await earningsService.addEarning(result.data.id, order.total_amount);
+            }
+
             return sendResponse(res, 200, true, `Order status updated to ${status}`, order);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async acceptOrder(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(userId);
+            if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
+
+            const order = await ordersService.acceptOrder(result.data.id, req.params.id as string);
+            return sendResponse(res, 200, true, 'Order accepted', order);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async declineOrder(req: AuthRequest, res: Response) {
+        try {
+            const { reason } = req.body;
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(userId);
+            if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
+
+            const order = await ordersService.declineOrder(result.data.id, req.params.id as string, reason);
+            return sendResponse(res, 200, true, 'Order declined', order);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async getEarnings(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(userId);
+            if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
+
+            const earnings = await earningsService.getHistory(result.data.id);
+            return sendResponse(res, 200, true, 'Earnings fetched', earnings);
         } catch (error: any) {
             return sendResponse(res, 500, false, error.message);
         }

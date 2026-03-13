@@ -186,6 +186,10 @@ Requires Role: `consumer`
 - `POST /api/payments/tip` : Add tip transaction attached to existing order.
 - `POST /api/payments/refund` : Trigger refund flow.
 
+**Wallet Endpoints** (Role: `consumer`)
+- `GET /api/payments/wallet/balance` : Fetch current wallet balance.
+- `GET /api/payments/wallet/transactions` : Fetch wallet transaction history.
+
 ---
 
 ## Merchant
@@ -241,8 +245,9 @@ A single merchant role governs both Restaurants and Grocery stores. Merchants re
 - `GET /api/merchant/orders` : Fetch incoming/active store orders.
 - `GET /api/merchant/orders/:id` : Order detail.
 - `POST /api/merchant/orders/:id/accept` : Mark incoming order as `ACCEPTED`.
-- `POST /api/merchant/orders/:id/reject` : Push order into `CANCELLED`.
-- `POST /api/merchant/orders/:id/ready` : Push order to `READY_FOR_PICKUP`.
+- `POST /api/merchant/orders/:id/decline` : Mark incoming order as `CANCELLED` and refund if wallet was used.
+- `PUT /api/merchant/orders/:id/status` : Update order status (e.g., `preparing`, `ready_for_pickup`, `delivered`).
+- `GET /api/merchant/earnings` : Fetch store total earnings and current balance.
 
 ---
 
@@ -282,6 +287,21 @@ Requires Role: `courier`
 Consumers poll `/api/orders/:orderId/tracking` to pull these updates.
 
 ---
+
+## Real-Time Updates (WebSockets)
+*Server URL: Base URL (e.g. `http://localhost:3000`)*
+
+The API uses `socket.io` for real-time notifications. Clients should connect and join a room based on their role and ID.
+
+**Rooms:**
+- `user:<userId>` : For consumer notifications.
+- `merchant:<merchantId>` : For store notifications.
+
+**Events (Sent by Server):**
+- `new_order` : Triggered for merchants when a new order is placed. (Data: `Order` object)
+- `order_status_changed` : Triggered for users when their order status is updated. (Data: `Order` object)
+- `earnings_updated` : (Future) Triggered for merchants when earnings change.
+
 
 ## Notifications
 *Prefix: `/api/notifications`*

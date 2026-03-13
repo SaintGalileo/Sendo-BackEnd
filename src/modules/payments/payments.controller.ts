@@ -1,10 +1,12 @@
 import { Request, Response } from 'express';
 import { PaymentsService } from './payments.service';
+import { WalletService } from './wallet.service';
 import { AuthRequest } from '../../common/middleware/auth.middleware';
 import { sendResponse } from '../../common/utils/response';
 import { getPaginationOptions, formatPaginatedResponse } from '../../common/utils/pagination';
 
 const paymentsService = new PaymentsService();
+const walletService = new WalletService();
 
 export class PaymentsController {
     async createIntent(req: AuthRequest, res: Response) {
@@ -60,6 +62,25 @@ export class PaymentsController {
 
             const refund = await paymentsService.refundPayment(req.user.id, orderId);
             return sendResponse(res, 200, true, 'Payment refunded', refund);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async getWalletBalance(req: AuthRequest, res: Response) {
+        try {
+            const wallet = await walletService.getOrCreateWallet(req.user.id);
+            return sendResponse(res, 200, true, 'Wallet balance fetched', { balance: wallet.balance });
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async getWalletTransactions(req: AuthRequest, res: Response) {
+        try {
+            const pagination = getPaginationOptions(req.query);
+            const txns = await walletService.getTransactions(req.user.id, pagination);
+            return sendResponse(res, 200, true, 'Wallet transactions fetched', formatPaginatedResponse(txns.data, txns.totalCount, pagination.page, pagination.limit));
         } catch (error: any) {
             return sendResponse(res, 500, false, error.message);
         }

@@ -41,19 +41,11 @@ router.delete('/extra-options/:id', merchantController.deleteExtraOption);
 // Orders
 router.get('/orders', merchantController.getOrders);
 router.get('/orders/:id', merchantController.getOrderById);
+router.post('/orders/:id/accept', merchantController.acceptOrder);
+router.post('/orders/:id/decline', merchantController.declineOrder);
+router.put('/orders/:id/status', merchantController.updateOrderStatus);
 
-// Order Status transitions
-router.post('/orders/:id/accept', (req, res) => {
-    req.body.status = OrderStatus.ACCEPTED;
-    merchantController.updateOrderStatus(req as any, res);
-});
-router.post('/orders/:id/reject', (req, res) => {
-    req.body.status = OrderStatus.CANCELLED;
-    merchantController.updateOrderStatus(req as any, res);
-});
-router.post('/orders/:id/ready', (req, res) => {
-    req.body.status = OrderStatus.READY_FOR_PICKUP;
-    merchantController.updateOrderStatus(req as any, res);
-});
+// Earnings
+router.get('/earnings', merchantController.getEarnings);
 
 export default router;
