@@ -21,7 +21,7 @@ export class ProductsService {
     }
 
     async getProducts(filters: any, pagination: any) {
-        let query = supabase.from('products').select('*, merchant:merchants(*), category:categories(*)', { count: 'exact' });
+        let query = supabase.from('products').select('*, merchant:merchants(*), category:categories(*), extra_groups:product_extra_groups(*, options:product_extra_options(*))', { count: 'exact' });
 
         if (filters.storeId) {
             query = query.eq('merchant_id', filters.storeId);

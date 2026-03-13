@@ -122,7 +122,7 @@ export class StoresService {
         // Menu usually implies categories and their nested products
         const { data, error } = await supabase
             .from('categories')
-            .select('*, products(*)')
+            .select('*, products(*, extra_groups:product_extra_groups(*, options:product_extra_options(*)))')
             .eq('merchant_id', storeId);
 
         if (error) throw new Error(error.message);
@@ -145,7 +145,7 @@ export class StoresService {
 
         const { data, count, error } = await supabase
             .from('products')
-            .select('*', { count: 'exact' })
+            .select('*, extra_groups:product_extra_groups(*, options:product_extra_options(*))', { count: 'exact' })
             .eq('merchant_id', storeId)
             .range(from, to);
 

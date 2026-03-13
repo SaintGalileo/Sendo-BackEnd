@@ -136,7 +136,7 @@ export class MerchantOnboardingService {
     async getCatalog(merchantId: string) {
         const { data, error } = await supabase
             .from('categories')
-            .select('*, products(*)')
+            .select('*, products(*, extra_groups:product_extra_groups(*, options:product_extra_options(*)))')
             .eq('merchant_id', merchantId);
 
         if (error) throw new Error(error.message);
