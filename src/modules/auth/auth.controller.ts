@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { AuthRequest } from '../../common/middleware/auth.middleware';
 import { AuthService } from './auth.service';
 
 const authService = new AuthService();
@@ -127,7 +128,7 @@ export class AuthController {
         return res.status(result.success ? 200 : 500).json(result);
     }
 
-    async verifyEmailOTP(req: Request, res: Response) {
+    async verifyEmailOTP(req: AuthRequest, res: Response) {
         const { email, otpCode } = req.body || {};
 
         if (!email || !otpCode) {
@@ -137,7 +138,7 @@ export class AuthController {
             });
         }
 
-        const result = await authService.verifyEmailOTP(email, otpCode);
+        const result = await authService.verifyEmailOTP(email, otpCode, req.user?.id);
         return res.status(result.success ? 200 : 401).json(result);
     }
 }

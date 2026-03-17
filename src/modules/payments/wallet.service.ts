@@ -19,7 +19,7 @@ export class WalletService {
                 .single();
 
             if (createError) throw new Error(createError.message);
-            
+
             // Trigger SeerBit account creation for new wallet
             return await this.ensureSeerBitAccount(userId, newWallet);
         }
@@ -49,7 +49,7 @@ export class WalletService {
             }
 
             const fullName = `${user.first_name} ${user.last_name}`;
-            const email = user.email || 'no-email@sendo.com'; // Fallback if missing
+            const email = user.email || 'no-email@sendo.com';
             const reference = `WAL_${userId.split('-')[0]}_${Date.now()}`;
 
             const seerbitResponse = await seerbitService.createVirtualAccount(fullName, email, reference);

@@ -115,22 +115,22 @@ export class PaymentsController {
 
                 // We only care about transaction success for funding
                 if (eventType === 'transaction' && data.gatewayMessage === 'Successful') {
-                    const { amount, email, reference, currency } = data;
+                    const { amount, email, reference, currency, creditAccountNumber } = data;
 
-                    // Find wallet by reference (SeerBit uses the reference we gave him)
+                    // Find wallet by account number or reference for better robustness
                     const { data: wallet, error: walletError } = await supabase
                         .from('wallets')
                         .select('user_id, balance')
-                        .eq('reference', reference)
-                        .single();
+                        .or(`account_number.eq.${creditAccountNumber},reference.eq.${reference}`)
+                        .maybeSingle();
 
                     if (walletError || !wallet) {
-                        console.error(`Webhook Error: Wallet for reference ${reference} not found`);
+                        console.error(`Webhook Error: Wallet for account ${creditAccountNumber} or reference ${reference} not found`);
                         continue;
                     }
 
                     // Credit the wallet
-                    await walletService.credit(wallet.user_id, Number(amount), `SeerBit Funding: ${reference}`);
+                    await walletService.credit(wallet.user_id, Number(amount), `SeerBit Funding: ${creditAccountNumber || reference}`);
 
                     // Send notification email
                     await emailService.sendEmail(email, 'Wallet Funded!', `

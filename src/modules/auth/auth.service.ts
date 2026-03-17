@@ -338,7 +338,7 @@ export class AuthService {
         `);
     }
 
-    async verifyEmailOTP(email: string, otpCode: string): Promise<{ success: boolean; message: string }> {
+    async verifyEmailOTP(email: string, otpCode: string, userId?: string): Promise<{ success: boolean; message: string }> {
         const { data: otpData, error: otpError } = await supabase
             .from('otps')
             .select('*')
@@ -362,6 +362,22 @@ export class AuthService {
 
         if (updateError) {
             return { success: false, message: 'Failed to verify OTP' };
+        }
+
+        // If userId is provided, update user table with email and set email_verified = true
+        if (userId) {
+            const { error: userUpdateError } = await supabase
+                .from('users')
+                .update({ 
+                    email: email,
+                    email_verified: true 
+                })
+                .eq('id', userId);
+
+            if (userUpdateError) {
+                console.error('Failed to update user email status:', userUpdateError);
+                // We still returned success for OTP verification, but logged the error
+            }
         }
 
         return { success: true, message: 'Email verified successfully' };
