@@ -1,4 +1,7 @@
 import { supabase } from '../../config/supabase';
+import { SeerBitService } from './seerbit.service';
+
+const seerbitService = new SeerBitService();
 
 export class WalletService {
     async getOrCreateWallet(userId: string) {
@@ -16,11 +19,67 @@ export class WalletService {
                 .single();
 
             if (createError) throw new Error(createError.message);
-            return newWallet;
+            
+            // Trigger SeerBit account creation for new wallet
+            return await this.ensureSeerBitAccount(userId, newWallet);
         }
 
         if (error) throw new Error(error.message);
+
+        // If wallet exists but lacks account details, trigger it
+        if (!data.account_number) {
+            return await this.ensureSeerBitAccount(userId, data);
+        }
+
         return data;
+    }
+
+    private async ensureSeerBitAccount(userId: string, wallet: any) {
+        try {
+            // Fetch user details for SeerBit
+            const { data: user, error: userError } = await supabase
+                .from('users')
+                .select('first_name, last_name, email')
+                .eq('id', userId)
+                .single();
+
+            if (userError || !user) {
+                console.error('Failed to fetch user for SeerBit:', userError);
+                return wallet;
+            }
+
+            const fullName = `${user.first_name} ${user.last_name}`;
+            const email = user.email || 'no-email@sendo.com'; // Fallback if missing
+            const reference = `WAL_${userId.split('-')[0]}_${Date.now()}`;
+
+            const seerbitResponse = await seerbitService.createVirtualAccount(fullName, email, reference);
+
+            if (seerbitResponse) {
+                const { payments } = seerbitResponse.data;
+                const { data: updatedWallet, error: updateError } = await supabase
+                    .from('wallets')
+                    .update({
+                        account_number: payments.accountNumber,
+                        bank_name: payments.bankName,
+                        account_name: payments.walletName,
+                        reference: payments.reference
+                    })
+                    .eq('id', wallet.id)
+                    .select()
+                    .single();
+
+                if (updateError) {
+                    console.error('Failed to update wallet with SeerBit details:', updateError);
+                    return wallet;
+                }
+                return updatedWallet;
+            }
+
+            return wallet;
+        } catch (error) {
+            console.error('Error in ensureSeerBitAccount:', error);
+            return wallet;
+        }
     }
 
     async debit(userId: string, amount: number, orderId?: string, description?: string) {

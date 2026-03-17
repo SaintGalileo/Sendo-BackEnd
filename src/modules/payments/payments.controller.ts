@@ -1,12 +1,15 @@
 import { Request, Response } from 'express';
+import { supabase } from '../../config/supabase';
 import { PaymentsService } from './payments.service';
 import { WalletService } from './wallet.service';
+import { EmailService } from '../notifications/email.service';
 import { AuthRequest } from '../../common/middleware/auth.middleware';
 import { sendResponse } from '../../common/utils/response';
 import { getPaginationOptions, formatPaginatedResponse } from '../../common/utils/pagination';
 
 const paymentsService = new PaymentsService();
 const walletService = new WalletService();
+const emailService = new EmailService();
 
 export class PaymentsController {
     async createIntent(req: AuthRequest, res: Response) {
@@ -93,6 +96,54 @@ export class PaymentsController {
             return sendResponse(res, 200, true, 'Wallet fetched successfully', wallet);
         } catch (error: any) {
             return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async handleSeerBitWebhook(req: Request, res: Response) {
+        try {
+            const { notificationItems } = req.body;
+            
+            if (!notificationItems || !Array.isArray(notificationItems)) {
+                return res.status(200).json({ status: 'ACK' }); // Still acknowledge
+            }
+
+            for (const item of notificationItems) {
+                const { notificationRequestItem } = item;
+                if (!notificationRequestItem) continue;
+
+                const { eventType, data } = notificationRequestItem;
+
+                // We only care about transaction success for funding
+                if (eventType === 'transaction' && data.gatewayMessage === 'Successful') {
+                    const { amount, email, reference, currency } = data;
+
+                    // Find wallet by reference (SeerBit uses the reference we gave him)
+                    const { data: wallet, error: walletError } = await supabase
+                        .from('wallets')
+                        .select('user_id, balance')
+                        .eq('reference', reference)
+                        .single();
+
+                    if (walletError || !wallet) {
+                        console.error(`Webhook Error: Wallet for reference ${reference} not found`);
+                        continue;
+                    }
+
+                    // Credit the wallet
+                    await walletService.credit(wallet.user_id, Number(amount), `SeerBit Funding: ${reference}`);
+
+                    // Send notification email
+                    await emailService.sendEmail(email, 'Wallet Funded!', `
+                        <p>Your account has been credited with <b>${currency} ${amount}</b>.</p>
+                        <p>New balance: <b>${currency} ${Number(wallet.balance) + Number(amount)}</b></p>
+                    `);
+                }
+            }
+
+            return res.status(200).json({ status: 'SUCCESS' });
+        } catch (error: any) {
+            console.error('Webhook processing error:', error);
+            return res.status(500).json({ success: false, message: 'Internal server error during webhook processing' });
         }
     }
 }

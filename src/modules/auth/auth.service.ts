@@ -331,7 +331,11 @@ export class AuthService {
             return { success: false, message: 'Failed to generate OTP' };
         }
 
-        return await emailService.sendOTP(email, otpCode);
+        return await emailService.sendEmail(email, 'Sendo Verification Code', `
+            <p>Your verification code is:</p>
+            <h1 style="color: #4CAF50; font-size: 32px; letter-spacing: 5px; margin: 20px 0;">${otpCode}</h1>
+            <p>This code is valid for 10 minutes. If you did not request this code, please ignore this email.</p>
+        `);
     }
 
     async verifyEmailOTP(email: string, otpCode: string): Promise<{ success: boolean; message: string }> {

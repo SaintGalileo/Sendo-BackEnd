@@ -21,4 +21,7 @@ router.get('/wallet', paymentsController.getWallet);
 router.get('/wallet/balance', paymentsController.getWalletBalance);
 router.get('/wallet/transactions', paymentsController.getWalletTransactions);
 
+// Webhook
+router.post('/webhook/seerbit', paymentsController.handleSeerBitWebhook);
+
 export default router;
