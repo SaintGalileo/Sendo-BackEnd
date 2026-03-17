@@ -85,4 +85,14 @@ export class PaymentsController {
             return sendResponse(res, 500, false, error.message);
         }
     }
+
+    async getWallet(req: AuthRequest, res: Response) {
+        try {
+            const wallet = await walletService.getOrCreateWallet(req.user.id);
+            // Optionally include transactions if needed, for now just the wallet
+            return sendResponse(res, 200, true, 'Wallet fetched successfully', wallet);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
 }

@@ -1,4 +1,5 @@
 import { supabase } from '../../config/supabase';
+import { EmailService } from '../notifications/email.service';
 import axios from 'axios';
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
@@ -9,6 +10,8 @@ const TERMII_API_KEY = process.env.TERMII_API_KEY || '';
 const TERMII_URL = 'https://api.ng.termii.com/api/sms/send';
 const TERMII_SENDER_ID = process.env.TERMII_SENDER_ID || 'Sendo';
 const JWT_SECRET = process.env.JWT_SECRET || 'your_super_secret_jwt_key';
+
+const emailService = new EmailService();
 
 export class AuthService {
     async sendOTP(phone: string): Promise<{ success: boolean; message: string }> {
@@ -308,5 +311,55 @@ export class AuthService {
             },
             token: this.generateAuthToken(newUser)
         };
+    }
+
+    async sendEmailOTP(email: string): Promise<{ success: boolean; message: string }> {
+        // Generate 6-digit OTP
+        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+        const { error } = await supabase.from('otps').insert([
+            {
+                email,
+                otp_code: otpCode,
+                expires_at: expiresAt.toISOString(),
+            },
+        ]);
+
+        if (error) {
+            console.error('Error storing Email OTP:', error);
+            return { success: false, message: 'Failed to generate OTP' };
+        }
+
+        return await emailService.sendOTP(email, otpCode);
+    }
+
+    async verifyEmailOTP(email: string, otpCode: string): Promise<{ success: boolean; message: string }> {
+        const { data: otpData, error: otpError } = await supabase
+            .from('otps')
+            .select('*')
+            .eq('email', email)
+            .eq('otp_code', otpCode)
+            .eq('is_verified', false)
+            .gt('expires_at', new Date().toISOString())
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+
+        if (otpError || !otpData) {
+            return { success: false, message: 'Invalid or expired OTP' };
+        }
+
+        // Mark OTP as verified
+        const { error: updateError } = await supabase
+            .from('otps')
+            .update({ is_verified: true })
+            .eq('id', otpData.id);
+
+        if (updateError) {
+            return { success: false, message: 'Failed to verify OTP' };
+        }
+
+        return { success: true, message: 'Email verified successfully' };
     }
 }

@@ -60,6 +60,16 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='estimated_delivery_time') THEN
         ALTER TABLE public.orders ADD COLUMN estimated_delivery_time TIMESTAMPTZ;
     END IF;
+
+    -- Handle potential 'total' column mismatch (make it nullable if it exists)
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='total') THEN
+        ALTER TABLE public.orders ALTER COLUMN total DROP NOT NULL;
+    END IF;
+
+    -- Handle potential 'delivery_address' column mismatch
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='delivery_address') THEN
+        ALTER TABLE public.orders ALTER COLUMN delivery_address DROP NOT NULL;
+    END IF;
 END $$;
 
 -- 3. Create order_items table if it doesn't exist
@@ -73,11 +83,40 @@ CREATE TABLE IF NOT EXISTS public.order_items (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 4. ENABLE SECURITY
+-- 4. Ensure all required columns exist in order_items
+DO $$ 
+BEGIN 
+    -- order_id
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='order_items' AND column_name='order_id') THEN
+        ALTER TABLE public.order_items ADD COLUMN order_id UUID NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE;
+    END IF;
+
+    -- product_id
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='order_items' AND column_name='product_id') THEN
+        ALTER TABLE public.order_items ADD COLUMN product_id UUID NOT NULL REFERENCES public.products(id) ON DELETE CASCADE;
+    END IF;
+
+    -- quantity
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='order_items' AND column_name='quantity') THEN
+        ALTER TABLE public.order_items ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1;
+    END IF;
+
+    -- price
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='order_items' AND column_name='price') THEN
+        ALTER TABLE public.order_items ADD COLUMN price DECIMAL(12, 2) NOT NULL DEFAULT 0;
+    END IF;
+
+    -- extras
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='order_items' AND column_name='extras') THEN
+        ALTER TABLE public.order_items ADD COLUMN extras JSONB DEFAULT '[]';
+    END IF;
+END $$;
+
+-- 5. ENABLE SECURITY
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
 
--- 5. POLICIES: Orders
+-- 6. POLICIES: Orders
 DO $$ 
 BEGIN
     DROP POLICY IF EXISTS "Users can view their own orders" ON public.orders;
@@ -87,7 +126,7 @@ BEGIN
     CREATE POLICY "Merchants can view their store orders" ON public.orders FOR SELECT TO authenticated USING (EXISTS (SELECT 1 FROM merchants WHERE merchants.id = orders.merchant_id AND merchants.user_id = auth.uid()));
 END $$;
 
--- 6. POLICIES: Order Items
+-- 7. POLICIES: Order Items
 DO $$ 
 BEGIN
     DROP POLICY IF EXISTS "Users can view their own order items" ON public.order_items;
@@ -97,7 +136,7 @@ BEGIN
     CREATE POLICY "Merchants can view their order items" ON public.order_items FOR SELECT TO authenticated USING (EXISTS (SELECT 1 FROM orders JOIN merchants ON orders.merchant_id = merchants.id WHERE orders.id = order_items.order_id AND merchants.user_id = auth.uid()));
 END $$;
 
--- 7. TRIGGER for updated_at
+-- 8. TRIGGER for updated_at
 CREATE OR REPLACE FUNCTION public.update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN

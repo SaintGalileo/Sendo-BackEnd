@@ -211,7 +211,7 @@ export class MerchantController {
 
     async createProduct(req: AuthRequest, res: Response) {
         try {
-            const { name, price, category_id, image_url } = req.body;
+            const { name, price, category_id, image_url, description, is_available, stock_quantity, track_stock } = req.body;
             if (!name || !price || !category_id) {
                 return sendResponse(res, 400, false, 'Name, price, and category_id are required');
             }
@@ -221,7 +221,16 @@ export class MerchantController {
             const result = await merchantService.getMerchantByUserId(userId);
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
-            const product = await merchantService.createProduct(result.data.id, req.body);
+            const product = await merchantService.createProduct(result.data.id, {
+                name,
+                description,
+                price,
+                category_id,
+                image_url,
+                is_available: is_available !== undefined ? is_available : true,
+                stock_quantity: stock_quantity || 0,
+                track_stock: track_stock || false
+            });
             return sendResponse(res, 201, true, 'Product created', product);
         } catch (error: any) {
             return sendResponse(res, 500, false, error.message);

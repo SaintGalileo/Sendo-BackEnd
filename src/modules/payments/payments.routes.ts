@@ -17,6 +17,7 @@ router.post('/tip', paymentsController.addTip);
 router.post('/refund', paymentsController.refundPayment);
 
 // Wallet
+router.get('/wallet', paymentsController.getWallet);
 router.get('/wallet/balance', paymentsController.getWalletBalance);
 router.get('/wallet/transactions', paymentsController.getWalletTransactions);
 

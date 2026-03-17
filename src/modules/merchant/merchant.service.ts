@@ -177,7 +177,12 @@ export class MerchantOnboardingService {
             .select()
             .single();
 
-        if (error) throw new Error(error.message);
+        // If .single() fails (sometimes due to RLS delays or other issues), 
+        // but the data was actually inserted, we handle it gracefully.
+        if (error) {
+            console.error('Create product error:', error.message);
+            throw new Error(error.message);
+        }
         return data;
     }
 

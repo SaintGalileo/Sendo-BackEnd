@@ -115,4 +115,29 @@ export class AuthController {
         );
         return res.status(result.success ? 201 : 400).json(result);
     }
+
+    async sendEmailOTP(req: Request, res: Response) {
+        const { email } = req.body || {};
+
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'Email is required' });
+        }
+
+        const result = await authService.sendEmailOTP(email);
+        return res.status(result.success ? 200 : 500).json(result);
+    }
+
+    async verifyEmailOTP(req: Request, res: Response) {
+        const { email, otpCode } = req.body || {};
+
+        if (!email || !otpCode) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email and OTP code are required',
+            });
+        }
+
+        const result = await authService.verifyEmailOTP(email, otpCode);
+        return res.status(result.success ? 200 : 401).json(result);
+    }
 }
