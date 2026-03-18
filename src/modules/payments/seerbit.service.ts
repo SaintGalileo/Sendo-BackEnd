@@ -22,12 +22,35 @@ export interface SeerBitAccountResponse {
 }
 
 export class SeerBitService {
+    private async getBearerToken(): Promise<string | null> {
+        try {
+            const response = await axios.post(`${SEERBIT_BASE_URL}/encrypt/keys`, {
+                key: `${SEERBIT_SECRET_KEY}.${SEERBIT_PUBLIC_KEY}`
+            });
+
+            if (response.data.status === 'SUCCESS') {
+                return response.data.data.EncryptedSecKey.encryptedKey;
+            }
+            console.error('[SEERBIT] Failed to generate SeerBit Bearer Token. Status not SUCCESS.');
+            return null;
+        } catch (error: any) {
+            console.error('[SEERBIT] Token Encryption Error:', error.response?.status, error.response?.data || error.message);
+            return null;
+        }
+    }
+
     async createVirtualAccount(fullName: string, email: string, reference: string): Promise<SeerBitAccountResponse | null> {
         try {
+            const token = await this.getBearerToken();
+            if (!token) {
+                console.error('Cannot create virtual account: Missing Bearer Token');
+                return null;
+            }
+
             const response = await axios.post(`${SEERBIT_BASE_URL}/virtual-accounts`, {
                 publicKey: SEERBIT_PUBLIC_KEY,
                 fullName: fullName,
-                bankVerificationNumber: "", // Optional, as per user prompt snippet
+                bankVerificationNumber: "", // Optional
                 currency: "NGN",
                 country: "NG",
                 reference: reference,
@@ -35,7 +58,7 @@ export class SeerBitService {
             }, {
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${SEERBIT_SECRET_KEY}`
+                    'Authorization': `Bearer ${token}`
                 }
             });
 

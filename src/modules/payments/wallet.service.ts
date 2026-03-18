@@ -36,6 +36,7 @@ export class WalletService {
 
     private async ensureSeerBitAccount(userId: string, wallet: any) {
         try {
+            console.log(`[WALLET] Ensuring SeerBit account for user ${userId}`);
             // Fetch user details for SeerBit
             const { data: user, error: userError } = await supabase
                 .from('users')
@@ -44,7 +45,7 @@ export class WalletService {
                 .single();
 
             if (userError || !user) {
-                console.error('Failed to fetch user for SeerBit:', userError);
+                console.error(`[WALLET] Failed to fetch user ${userId} for SeerBit:`, userError);
                 return wallet;
             }
 
@@ -52,10 +53,12 @@ export class WalletService {
             const email = user.email || 'no-email@sendo.com';
             const reference = `WAL_${userId.split('-')[0]}_${Date.now()}`;
 
+            console.log(`[WALLET] Calling SeerBit for ${fullName} (${email}) with ref ${reference}`);
             const seerbitResponse = await seerbitService.createVirtualAccount(fullName, email, reference);
 
             if (seerbitResponse) {
                 const { payments } = seerbitResponse.data;
+                console.log(`[WALLET] SeerBit account created: ${payments.accountNumber} (${payments.bankName})`);
                 const { data: updatedWallet, error: updateError } = await supabase
                     .from('wallets')
                     .update({
@@ -69,15 +72,16 @@ export class WalletService {
                     .single();
 
                 if (updateError) {
-                    console.error('Failed to update wallet with SeerBit details:', updateError);
+                    console.error('[WALLET] Failed to update wallet with SeerBit details:', updateError);
                     return wallet;
                 }
                 return updatedWallet;
             }
 
+            console.warn(`[WALLET] SeerBit account creation failed for user ${userId}, check SeerBit service logs.`);
             return wallet;
         } catch (error) {
-            console.error('Error in ensureSeerBitAccount:', error);
+            console.error('[WALLET] Error in ensureSeerBitAccount:', error);
             return wallet;
         }
     }
