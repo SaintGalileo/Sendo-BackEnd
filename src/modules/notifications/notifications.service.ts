@@ -1,4 +1,5 @@
 import { supabase } from '../../config/supabase';
+import { messaging } from '../../config/firebase';
 
 // Real system would use FCM (Firebase Cloud Messaging) or similar
 export class NotificationsService {
@@ -54,5 +55,49 @@ export class NotificationsService {
 
         if (error) throw new Error(error.message);
         return data;
+    }
+
+    async sendPushNotification(userId: string, title: string, body: string, data?: any) {
+        try {
+            // 1. Get user's FCM token
+            const { data: user, error } = await supabase
+                .from('users')
+                .select('fcm_token')
+                .eq('id', userId)
+                .single();
+
+            if (error || !user?.fcm_token) {
+                console.warn(`[Push] No FCM token found for user ${userId}`);
+                return null;
+            }
+
+            // 2. Prepare message
+            const message = {
+                notification: {
+                    title,
+                    body,
+                },
+                data: data || {},
+                token: user.fcm_token,
+            };
+
+            // 3. Send via Firebase
+            const response = await messaging.send(message);
+            console.log(`[Push] Successfully sent message to user ${userId}:`, response);
+            
+            // 4. Optionally log to notifications table (internal history)
+            await supabase.from('notifications').insert([{
+                user_id: userId,
+                title,
+                message: body,
+                type: 'push',
+                is_read: false
+            }]);
+
+            return response;
+        } catch (error: any) {
+            console.error(`[Push] Error sending notification to user ${userId}:`, error.message);
+            return null;
+        }
     }
 }
