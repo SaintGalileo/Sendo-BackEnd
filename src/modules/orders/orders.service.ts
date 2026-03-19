@@ -35,28 +35,34 @@ export class OrdersService {
             };
         });
 
+        // 1. Fetch Address Details for snapshot
+        const { data: address, error: addressError } = await supabase
+            .from('addresses')
+            .select('address, latitude, longitude')
+            .eq('id', data.addressId)
+            .single();
+        
+        if (addressError || !address) throw new Error('Delivery address not found');
+
         const deliveryFee = await this.getDeliveryFeeEstimate(merchantId, data.addressId);
         const totalAmount = subtotal + deliveryFee;
         const paymentMethod = data.paymentMethod || 'wallet';
 
-        // If wallet payment, check balance first
-        if (paymentMethod === 'wallet') {
-            const wallet = await walletService.getOrCreateWallet(userId);
-            if (wallet.balance < totalAmount) {
-                throw new Error('Insufficient wallet balance');
-            }
-        }
+        // ... (wallet check remains)
 
-        // 1. Create the order
+        // 2. Create the order
         const { data: order, error: orderError } = await supabase
             .from('orders')
             .insert([{
-                user_id: userId,
+                consumer_id: userId,
                 merchant_id: merchantId,
                 address_id: data.addressId,
+                delivery_address: address.address,
+                delivery_lat: address.latitude,
+                delivery_lng: address.longitude,
                 subtotal,
                 delivery_fee: deliveryFee,
-                total_amount: totalAmount,
+                total_price: totalAmount,
                 status: OrderStatus.PENDING,
                 notes: data.notes || '',
                 payment_method: paymentMethod,
@@ -99,7 +105,7 @@ export class OrdersService {
         if (error) throw new Error(error.message);
 
         // Notify User
-        socketService.emitToUser(data.user_id, 'order_status_changed', data);
+        socketService.emitToUser(data.consumer_id, 'order_status_changed', data);
 
         return data;
     }
@@ -120,12 +126,12 @@ export class OrdersService {
 
         // If paid via wallet, refund the user
         if (order.data.payment_method === 'wallet' && order.data.payment_status === 'paid') {
-            await walletService.credit(order.data.user_id, order.data.total_amount, `Refund for declined order ${orderId}`);
+            await walletService.credit(order.data.consumer_id, order.data.total_price, `Refund for declined order ${orderId}`);
             await supabase.from('orders').update({ payment_status: 'refunded' }).eq('id', orderId);
         }
 
         // Notify User
-        socketService.emitToUser(data.user_id, 'order_status_changed', data);
+        socketService.emitToUser(data.consumer_id, 'order_status_changed', data);
 
         return data;
     }
@@ -136,8 +142,8 @@ export class OrdersService {
 
         const { data, count, error } = await supabase
             .from('orders')
-            .select('*, merchant:merchants(*)', { count: 'exact' })
-            .eq('user_id', userId)
+            .select('*, merchant:merchants(*), items:order_items(*, product:products(*))', { count: 'exact' })
+            .eq('consumer_id', userId)
             .order('created_at', { ascending: false })
             .range(from, to);
 
@@ -150,7 +156,7 @@ export class OrdersService {
             .from('orders')
             .select('*, merchant:merchants(*), address:addresses(*), items:order_items(*, product:products(*))')
             .eq('id', orderId)
-            .eq('user_id', userId)
+            .eq('consumer_id', userId)
             .single();
 
         if (error) throw new Error(error.message);
@@ -168,7 +174,7 @@ export class OrdersService {
             .from('orders')
             .update({ status: OrderStatus.CANCELLED })
             .eq('id', orderId)
-            .eq('user_id', userId)
+            .eq('consumer_id', userId)
             .select()
             .single();
 

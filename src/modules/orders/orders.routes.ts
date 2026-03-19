@@ -11,6 +11,7 @@ router.use(roleMiddleware(['consumer']));
 
 router.post('/', ordersController.createOrder);
 router.get('/', ordersController.getOrders);
+router.get('/history', ordersController.getOrders);
 
 router.get('/delivery-fee', ordersController.getDeliveryFeeEstimate);
 router.get('/:orderId', ordersController.getOrderById);

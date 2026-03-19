@@ -9,10 +9,10 @@ const ordersService = new OrdersService();
 export class OrdersController {
     async createOrder(req: AuthRequest, res: Response) {
         try {
-            const { addressId, notes } = req.body;
+            const { addressId, notes, paymentMethod } = req.body;
             if (!addressId) return sendResponse(res, 400, false, 'Address ID is required');
 
-            const order = await ordersService.createOrder(req.user.id, { addressId, notes });
+            const order = await ordersService.createOrder(req.user.id, { addressId, notes, paymentMethod });
             return sendResponse(res, 201, true, 'Order created successfully', order);
         } catch (error: any) {
             return sendResponse(res, 500, false, error.message);
@@ -23,7 +23,7 @@ export class OrdersController {
         try {
             const pagination = getPaginationOptions(req.query);
             const result = await ordersService.getOrders(req.user.id, pagination);
-            return sendResponse(res, 200, true, 'Orders fetched successfully', formatPaginatedResponse(result.data, result.totalCount, pagination.page, pagination.limit));
+            return sendResponse(res, 200, true, 'Order history fetched successfully', formatPaginatedResponse(result.data, result.totalCount, pagination.page, pagination.limit));
         } catch (error: any) {
             return sendResponse(res, 500, false, error.message);
         }
