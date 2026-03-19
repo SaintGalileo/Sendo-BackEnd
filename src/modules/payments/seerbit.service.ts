@@ -50,7 +50,7 @@ export class SeerBitService {
             const response = await axios.post(`${SEERBIT_BASE_URL}/virtual-accounts`, {
                 publicKey: SEERBIT_PUBLIC_KEY,
                 fullName: fullName,
-                bankVerificationNumber: "", // Optional
+                bankVerificationNumber: "",
                 currency: "NGN",
                 country: "NG",
                 reference: reference,
@@ -65,7 +65,7 @@ export class SeerBitService {
             if (response.data.status === 'SUCCESS') {
                 return response.data;
             }
-            
+
             console.error('SeerBit Account Creation Failed:', response.data);
             return null;
         } catch (error: any) {

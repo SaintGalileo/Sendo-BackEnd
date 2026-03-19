@@ -100,50 +100,108 @@ export class PaymentsController {
     }
 
     async handleSeerBitWebhook(req: Request, res: Response) {
+        const payload = req.body;
+        console.log('[WEBHOOK] Received SeerBit notification:', JSON.stringify(payload, null, 2));
+
+        // 1. Save the notification in the database immediately (as requested by docs)
+        const { data: notification, error: logError } = await supabase
+            .from('payment_notifications')
+            .insert([{
+                provider: 'seerbit',
+                payload: payload,
+                status: 'received'
+            }])
+            .select()
+            .single();
+
+        if (logError) {
+            console.error('[WEBHOOK] Failed to log notification:', logError);
+        }
+
+        // 2. Acknowledge the notification with status 200 (as requested by docs)
+        // We do this after logging but before business logic to satisfy the 10s requirement
+        // Actually, Express waits for the handler to finish unless we send early. 
+        // But we want to ensure business logic runs. We'll send at the end or use a background process.
+        // For now, we'll follow the flow: Log -> Logic -> Respond 200.
+
         try {
-            const { notificationItems } = req.body;
-            
-            if (!notificationItems || !Array.isArray(notificationItems)) {
-                return res.status(200).json({ status: 'ACK' }); // Still acknowledge
+            // Normalize payload: SeerBit can send a direct object or an array (if wrapped)
+            let items = [];
+            if (payload.notificationItems && Array.isArray(payload.notificationItems)) {
+                items = payload.notificationItems.map((item: any) => item.notificationRequestItem).filter(Boolean);
+            } else if (payload.eventType && payload.data) {
+                // Direct SeerBit payload
+                items = [payload];
+            } else if (payload.data && payload.data.reference) {
+                // Another common variation
+                items = [{ eventType: payload.resourceType || 'transaction', data: payload.data }];
             }
 
-            for (const item of notificationItems) {
-                const { notificationRequestItem } = item;
-                if (!notificationRequestItem) continue;
+            if (items.length === 0) {
+                console.warn('[WEBHOOK] No valid notification items found in payload');
+                if (notification) await supabase.from('payment_notifications').update({ status: 'ignored' }).eq('id', notification.id);
+                return res.status(200).json({ status: 'ACK' });
+            }
 
-                const { eventType, data } = notificationRequestItem;
+            for (const item of items) {
+                const { eventType, data } = item;
+                if (!data) continue;
 
-                // We only care about transaction success for funding
-                if (eventType === 'transaction' && data.gatewayMessage === 'Successful') {
-                    const { amount, email, reference, currency, creditAccountNumber } = data;
+                // SeerBit uses 'transaction' or 'transaction.success' etc. 
+                // We check gatewayMessage or status
+                const isSuccessful = (data.gatewayMessage === 'Successful' || data.gatewayMessage === 'Approved' || data.status === 'SUCCESS' || data.status === 'COMPLETED');
 
-                    // Find wallet by account number or reference for better robustness
+                if (isSuccessful) {
+                    const { amount, email, reference, currency, creditAccountNumber, paymentReference } = data;
+                    const finalRef = reference || paymentReference;
+
+                    console.log(`[WEBHOOK] Processing successful transaction: ${finalRef}, Amount: ${amount}`);
+
+                    // Find wallet by account number, reference, or email (as fallback)
                     const { data: wallet, error: walletError } = await supabase
                         .from('wallets')
                         .select('user_id, balance')
-                        .or(`account_number.eq.${creditAccountNumber},reference.eq.${reference}`)
+                        .or(`account_number.eq.${creditAccountNumber},reference.eq.${finalRef}`)
                         .maybeSingle();
 
                     if (walletError || !wallet) {
-                        console.error(`Webhook Error: Wallet for account ${creditAccountNumber} or reference ${reference} not found`);
+                        console.error(`[WEBHOOK] Wallet not found for account ${creditAccountNumber} or ref ${finalRef}`);
                         continue;
                     }
 
                     // Credit the wallet
-                    await walletService.credit(wallet.user_id, Number(amount), `SeerBit Funding: ${creditAccountNumber || reference}`);
+                    await walletService.credit(wallet.user_id, Number(amount), `SeerBit Funding: ${creditAccountNumber || finalRef}`);
 
-                    // Send notification email
-                    await emailService.sendEmail(email, 'Wallet Funded!', `
-                        <p>Your account has been credited with <b>${currency} ${amount}</b>.</p>
-                        <p>New balance: <b>${currency} ${Number(wallet.balance) + Number(amount)}</b></p>
-                    `);
+                    // Send notification email if email exists
+                    if (email || data.customer?.email) {
+                        const targetEmail = email || data.customer?.email;
+                        await emailService.sendEmail(targetEmail, 'Wallet Funded!', `
+                            <p>Your account has been credited with <b>${currency || 'NGN'} ${amount}</b>.</p>
+                            <p>New balance: <b>${currency || 'NGN'} ${Number(wallet.balance) + Number(amount)}</b></p>
+                        `).catch(e => console.error('[WEBHOOK] Email failed:', e));
+                    }
                 }
+            }
+
+            // Update notification status to processed
+            if (notification) {
+                await supabase
+                    .from('payment_notifications')
+                    .update({ status: 'processed' })
+                    .eq('id', notification.id);
             }
 
             return res.status(200).json({ status: 'SUCCESS' });
         } catch (error: any) {
-            console.error('Webhook processing error:', error);
-            return res.status(500).json({ success: false, message: 'Internal server error during webhook processing' });
+            console.error('[WEBHOOK] Error processing webhook:', error);
+            if (notification) {
+                await supabase
+                    .from('payment_notifications')
+                    .update({ status: 'error', error_message: error.message })
+                    .eq('id', notification.id);
+            }
+            // Always return 200 to SeerBit to stop retries if we handled it/logged it
+            return res.status(200).json({ status: 'ERROR_PROCESSED', message: error.message });
         }
     }
 }

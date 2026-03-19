@@ -64,7 +64,7 @@ export class WalletService {
                     .update({
                         account_number: payments.accountNumber,
                         bank_name: payments.bankName,
-                        account_name: payments.walletName,
+                        account_name: `${payments.walletName}/${fullName}`,
                         reference: payments.reference
                     })
                     .eq('id', wallet.id)

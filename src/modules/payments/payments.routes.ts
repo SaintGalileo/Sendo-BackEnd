@@ -6,6 +6,9 @@ import { roleMiddleware } from '../../common/middleware/role.middleware';
 const router = Router();
 const paymentsController = new PaymentsController();
 
+// Webhook (MUST be before authMiddleware)
+router.post('/webhook/seerbit', paymentsController.handleSeerBitWebhook);
+
 router.use(authMiddleware);
 router.use(roleMiddleware(['consumer'])); // Consumers initiate payments
 
@@ -20,8 +23,5 @@ router.post('/refund', paymentsController.refundPayment);
 router.get('/wallet', paymentsController.getWallet);
 router.get('/wallet/balance', paymentsController.getWalletBalance);
 router.get('/wallet/transactions', paymentsController.getWalletTransactions);
-
-// Webhook
-router.post('/webhook/seerbit', paymentsController.handleSeerBitWebhook);
 
 export default router;
