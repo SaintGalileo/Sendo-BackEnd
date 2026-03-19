@@ -67,4 +67,18 @@ export class OrdersController {
             return sendResponse(res, 500, false, error.message);
         }
     }
+
+    async getDeliveryFeeEstimate(req: AuthRequest, res: Response) {
+        try {
+            const { merchantId, addressId } = req.query;
+            if (!merchantId || !addressId) {
+                return sendResponse(res, 400, false, 'merchantId and addressId are required');
+            }
+
+            const fee = await ordersService.getDeliveryFeeEstimate(merchantId as string, addressId as string);
+            return sendResponse(res, 200, true, 'Delivery fee estimated', { fee, currency: 'NGN' });
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
 }

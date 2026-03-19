@@ -3,10 +3,12 @@ import { OrderStatus } from '../../common/constants/orderStatus';
 import { CartService } from '../cart/cart.service';
 import { WalletService } from '../payments/wallet.service';
 import { SocketService } from '../notifications/socket.service';
+import { LocationService } from './location.service';
 
 const cartService = new CartService();
 const walletService = new WalletService();
 const socketService = SocketService.getInstance();
+const locationService = new LocationService();
 
 export class OrdersService {
     async createOrder(userId: string, data: any) {
@@ -33,7 +35,7 @@ export class OrdersService {
             };
         });
 
-        const deliveryFee = data.deliveryFee || 5.00;
+        const deliveryFee = await this.getDeliveryFeeEstimate(merchantId, data.addressId);
         const totalAmount = subtotal + deliveryFee;
         const paymentMethod = data.paymentMethod || 'wallet';
 
@@ -224,5 +226,38 @@ export class OrdersService {
         }
 
         return trackingData;
+    }
+
+    async getDeliveryFeeEstimate(merchantId: string, addressId: string): Promise<number> {
+        // Fetch Merchant Location
+        const { data: merchant, error: mError } = await supabase
+            .from('merchants')
+            .select('latitude, longitude')
+            .eq('id', merchantId)
+            .single();
+        
+        if (mError || !merchant) throw new Error('Merchant location not found');
+
+        // Fetch Address Location
+        const { data: address, error: aError } = await supabase
+            .from('addresses')
+            .select('latitude, longitude')
+            .eq('id', addressId)
+            .single();
+
+        if (aError || !address) throw new Error('Delivery address coordinates not found');
+
+        if (merchant.latitude === null || merchant.longitude === null ||
+            address.latitude === null || address.longitude === null) {
+            // Fallback to a flat fee if coordinates are missing
+            return 500;
+        }
+
+        const distanceKm = await locationService.calculateDistance(
+            { lat: merchant.latitude, lng: merchant.longitude },
+            { lat: address.latitude, lng: address.longitude }
+        );
+
+        return locationService.calculateDeliveryFee(distanceKm);
     }
 }

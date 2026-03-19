@@ -16,6 +16,7 @@ router.get('/:orderId', ordersController.getOrderById);
 router.post('/:orderId/cancel', ordersController.cancelOrder);
 router.post('/:orderId/rate', ordersController.rateOrder);
 
+router.get('/delivery-fee', ordersController.getDeliveryFeeEstimate);
 router.get('/:orderId/tracking', ordersController.getOrderTracking);
 
 export default router;
