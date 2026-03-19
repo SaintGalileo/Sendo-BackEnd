@@ -14,6 +14,7 @@ import courierRoutes from '../modules/courier/courier.routes';
 import trackingRoutes from '../modules/tracking/tracking.routes';
 import notificationsRoutes from '../modules/notifications/notifications.routes';
 import couponsRoutes from '../modules/coupons/coupons.routes';
+import searchRoutes from '../modules/search/search.routes';
 import { reviewRoutes, storeReviewRoutes, courierReviewRoutes } from '../modules/reviews/reviews.routes';
 
 const router = Router();
@@ -50,6 +51,9 @@ router.use('/courier', trackingRoutes);
 
 // Notifications
 router.use('/notifications', notificationsRoutes);
+
+// Unified Search
+router.use('/search', searchRoutes);
 
 router.get('/', (req, res) => {
   res.json({ message: 'API root' });
