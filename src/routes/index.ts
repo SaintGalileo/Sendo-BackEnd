@@ -1,5 +1,6 @@
-﻿import { Router } from 'express';
+import { Router } from 'express';
 import authRoutes from '../modules/auth/auth.routes';
+import { PaymentsController } from '../modules/payments/payments.controller';
 
 // New unified routes
 import consumerRoutes from '../modules/consumer/consumer.routes';
@@ -16,6 +17,10 @@ import couponsRoutes from '../modules/coupons/coupons.routes';
 import { reviewRoutes, storeReviewRoutes, courierReviewRoutes } from '../modules/reviews/reviews.routes';
 
 const router = Router();
+const paymentsController = new PaymentsController();
+
+// Public Webhook (MUST be before any auth middleware)
+router.post('/payments/webhook/seerbit', paymentsController.handleSeerBitWebhook);
 
 // Existing Auth
 router.use('/auth', authRoutes);

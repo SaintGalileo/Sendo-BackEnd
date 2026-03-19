@@ -6,9 +6,7 @@ import { roleMiddleware } from '../../common/middleware/role.middleware';
 const router = Router();
 const paymentsController = new PaymentsController();
 
-// Webhook (MUST be before authMiddleware)
-router.post('/webhook/seerbit', paymentsController.handleSeerBitWebhook);
-
+// Auth and Role Middleware
 router.use(authMiddleware);
 router.use(roleMiddleware(['consumer'])); // Consumers initiate payments
 
