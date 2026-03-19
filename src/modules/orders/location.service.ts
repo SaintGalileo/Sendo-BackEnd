@@ -43,13 +43,13 @@ export class LocationService {
     /**
      * Calculates the delivery fee based on distance.
      * Pricing:
-     * - Base fee: 500 Naira (covers up to 3km)
-     * - Additional: 100 Naira per km after the base distance
+     * - Base fee: 1000 Naira (covers up to 3km)
+     * - Additional: 200 Naira per km after the base distance
      */
     calculateDeliveryFee(distanceKm: number): number {
-        const baseFee = 500;
+        const baseFee = 1000;
         const baseDistance = 3;
-        const perKmFee = 100;
+        const perKmFee = 200;
 
         if (distanceKm <= baseDistance) {
             return baseFee;
