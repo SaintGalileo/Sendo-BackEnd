@@ -10,5 +10,6 @@ router.use(authMiddleware);
 router.get('/', notificationsController.getNotifications);
 router.post('/read', notificationsController.readNotifications);
 router.post('/device-token', notificationsController.registerDeviceToken);
+router.post('/fcm-token', notificationsController.updateFcmToken);
 
 export default router;

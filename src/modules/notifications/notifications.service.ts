@@ -32,13 +32,23 @@ export class NotificationsService {
 
     async registerDeviceToken(userId: string, token: string, deviceType: string = 'unknown') {
         const { data, error } = await supabase
-            .from('user_devices')
-            .upsert({
-                user_id: userId,
+            .from('users')
+            .update({
                 fcm_token: token,
-                device_type: deviceType,
-                updated_at: new Date().toISOString()
-            }, { onConflict: 'fcm_token' }) // Or unique by user_id + device_id ideally
+            })
+            .eq('id', userId)
+            .select()
+            .single();
+
+        if (error) throw new Error(error.message);
+        return data;
+    }
+
+    async updateUserFcmToken(userId: string, token: string) {
+        const { data, error } = await supabase
+            .from('users')
+            .update({ fcm_token: token })
+            .eq('id', userId)
             .select()
             .single();
 

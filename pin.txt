@@ -1,1 +1,15 @@
-📩 Place Order Response: {"data": {"address_id": "7b1e643c-eed7-4cb0-a2cd-74e45b54dfe6", "consumer_id": null, "courier_id": null, "created_at": "2026-03-13T18:41:42.978835+00:00", "delivery_address": null, "delivery_fee": 5, "delivery_lat": null, "delivery_lng": null, "estimated_delivery_time": null, "id": "3c2dd6b8-ca37-469a-999b-7f6539705932", "merchant_id": "0186ec98-b519-479f-964e-b353124d00f0", "notes": "", "payment_method": "wallet", "payment_status": "pending", "status": "pending", "subtotal": 2200, "total": null, "total_amount": 2205, "updated_at": "2026-03-13T18:41:42.978835+00:00", "user_id": "91aa25b2-cdcd-4811-ae09-9d66b64db00f"}, "message": "Order created successfully", "success": true}
+How to Use
+To update the FCM token from the consumer app, send a POST request:
+
+Endpoint: POST /api/notifications/fcm-token Authentication: Bearer Token required Body:
+
+json
+{
+    "token": "YOUR_FCM_TOKEN_HERE"
+}
+Response:
+
+json
+{
+    "success": true,
+    "message": "FCM token updated succes

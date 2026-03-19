@@ -42,4 +42,16 @@ export class NotificationsController {
             return sendResponse(res, 500, false, error.message);
         }
     }
+
+    async updateFcmToken(req: AuthRequest, res: Response) {
+        try {
+            const { token } = req.body;
+            if (!token) return sendResponse(res, 400, false, 'FCM Token is required');
+
+            await notificationsService.updateUserFcmToken(req.user.id, token);
+            return sendResponse(res, 200, true, 'FCM token updated successfully');
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
 }

@@ -14,7 +14,7 @@ export class EmailService {
                         <h2 style="color: #333;">${title}</h2>
                         <div style="margin: 20px 0; line-height: 1.6;">${content}</div>
                         <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
-                        <p style="font-size: 12px; color: #888;">&copy; 2024 Sendo Delivery</p>
+                        <p style="font-size: 12px; color: #888;">&copy; 2026 Sendo Delivery</p>
                     </div>
                 `,
             });
