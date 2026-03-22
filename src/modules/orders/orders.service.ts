@@ -154,9 +154,9 @@ export class OrdersService {
     async getOrderById(userId: string, orderId: string) {
         const { data, error } = await supabase
             .from('orders')
-            .select('*, merchant:merchants(*), address:addresses(*), items:order_items(*, product:products(*))')
+            .select('*, merchant:merchants(*), address:addresses(*), items:order_items(*, product:products(*)), courier:users!courier_id(*)')
             .eq('id', orderId)
-            .eq('consumer_id', userId)
+            .eq('user_id', userId)
             .single();
 
         if (error) throw new Error(error.message);
