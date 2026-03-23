@@ -3,11 +3,13 @@ import { OrderStatus } from '../../common/constants/orderStatus';
 import { CartService } from '../cart/cart.service';
 import { WalletService } from '../payments/wallet.service';
 import { SocketService } from '../notifications/socket.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { LocationService } from './location.service';
 
 const cartService = new CartService();
 const walletService = new WalletService();
 const socketService = SocketService.getInstance();
+const notificationsService = new NotificationsService();
 const locationService = new LocationService();
 
 export class OrdersService {
@@ -101,6 +103,26 @@ export class OrdersService {
         // 6. Notify Merchant via WebSocket
         console.log(`[OrdersService] Emitting new_order to merchant:${merchantId}`);
         socketService.emitToMerchant(merchantId, 'new_order', fullOrder || order);
+
+        // 7. Send Push Notification to Merchant
+        try {
+            const { data: merchantUser } = await supabase
+                .from('merchants')
+                .select('user_id')
+                .eq('id', merchantId)
+                .single();
+
+            if (merchantUser?.user_id) {
+                await notificationsService.sendPushNotification(
+                    merchantUser.user_id,
+                    'New Order Received! 🛍️',
+                    `You have a new order (#${order.id.toString().slice(0, 8)}) for NGN ${order.total_price}`,
+                    { orderId: order.id, type: 'new_order' }
+                );
+            }
+        } catch (pushError: any) {
+            console.error('[OrdersService] Failed to send push notification:', pushError.message);
+        }
 
         return order;
     }
