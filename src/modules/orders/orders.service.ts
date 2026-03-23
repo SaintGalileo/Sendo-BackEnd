@@ -87,8 +87,15 @@ export class OrdersService {
         // 4. Clear cart
         await cartService.clearCart(userId);
 
-        // 5. Notify Merchant via WebSocket
-        socketService.emitToMerchant(merchantId, 'new_order', order);
+        // 5. Fetch Full Order Details for the notification
+        const { data: fullOrder } = await supabase
+            .from('orders')
+            .select('*, consumer:users!consumer_id(first_name, last_name), items:order_items(*, product:products(*))')
+            .eq('id', order.id)
+            .single();
+
+        // 6. Notify Merchant via WebSocket
+        socketService.emitToMerchant(merchantId, 'new_order', fullOrder || order);
 
         return order;
     }
@@ -156,7 +163,7 @@ export class OrdersService {
             .from('orders')
             .select('*, merchant:merchants(*), address:addresses(*), items:order_items(*, product:products(*)), courier:users!courier_id(*)')
             .eq('id', orderId)
-            .eq('user_id', userId)
+            .eq('consumer_id', userId)
             .single();
 
         if (error) throw new Error(error.message);
