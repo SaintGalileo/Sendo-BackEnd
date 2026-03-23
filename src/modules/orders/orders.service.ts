@@ -88,13 +88,18 @@ export class OrdersService {
         await cartService.clearCart(userId);
 
         // 5. Fetch Full Order Details for the notification
-        const { data: fullOrder } = await supabase
+        const { data: fullOrder, error: fetchError } = await supabase
             .from('orders')
-            .select('*, consumer:users!consumer_id(first_name, last_name), items:order_items(*, product:products(*))')
+            .select('*, consumer:users!consumer_id(first_name, last_name, phone), items:order_items(*, product:products(*))')
             .eq('id', order.id)
             .single();
 
+        if (fetchError) {
+            console.error('[OrdersService] Error fetching full order for notification:', fetchError.message);
+        }
+
         // 6. Notify Merchant via WebSocket
+        console.log(`[OrdersService] Emitting new_order to merchant:${merchantId}`);
         socketService.emitToMerchant(merchantId, 'new_order', fullOrder || order);
 
         return order;

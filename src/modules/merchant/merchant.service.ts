@@ -222,14 +222,20 @@ export class MerchantOnboardingService {
     }
 
     // --- Order Management ---
-    async getOrders(merchantId: string, pagination: any) {
+    async getOrders(merchantId: string, pagination: any, status?: string) {
         const from = pagination.offset;
         const to = from + pagination.limit - 1;
 
-        const { data, count, error } = await supabase
+        let query = supabase
             .from('orders')
             .select('*, customer:users!consumer_id(*), items:order_items(*, product:products(*))', { count: 'exact' })
-            .eq('merchant_id', merchantId)
+            .eq('merchant_id', merchantId);
+        
+        if (status) {
+            query = query.eq('status', status);
+        }
+
+        const { data, count, error } = await query
             .order('created_at', { ascending: false })
             .range(from, to);
 

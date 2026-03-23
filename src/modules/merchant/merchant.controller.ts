@@ -271,8 +271,9 @@ export class MerchantController {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(userId);
+            const { status } = req.query;
             const pagination = getPaginationOptions(req.query);
-            const orders = await merchantService.getOrders(result.data.id, pagination);
+            const orders = await merchantService.getOrders(result.data.id, pagination, status as string);
             return sendResponse(res, 200, true, 'Orders fetched', formatPaginatedResponse(orders.data, orders.totalCount, pagination.page, pagination.limit));
         } catch (error: any) {
             return sendResponse(res, 500, false, error.message);
