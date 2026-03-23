@@ -228,7 +228,7 @@ export class MerchantOnboardingService {
 
         const { data, count, error } = await supabase
             .from('orders')
-            .select('*, customer:users!user_id(*), items:order_items(*, product:products(*))', { count: 'exact' })
+            .select('*, customer:users!consumer_id(*), items:order_items(*, product:products(*))', { count: 'exact' })
             .eq('merchant_id', merchantId)
             .order('created_at', { ascending: false })
             .range(from, to);
@@ -240,7 +240,7 @@ export class MerchantOnboardingService {
     async getOrderById(merchantId: string, orderId: string) {
         const { data, error } = await supabase
             .from('orders')
-            .select('*, customer:users!user_id(*), items:order_items(*, product:products(*))')
+            .select('*, customer:users!consumer_id(*), items:order_items(*, product:products(*))')
             .eq('id', orderId)
             .eq('merchant_id', merchantId)
             .single();
@@ -261,7 +261,7 @@ export class MerchantOnboardingService {
         if (error) throw new Error(error.message);
 
         // Notify User
-        socketService.emitToUser(data.user_id, 'order_status_changed', data);
+        socketService.emitToUser(data.consumer_id, 'order_status_changed', data);
 
         return data;
     }

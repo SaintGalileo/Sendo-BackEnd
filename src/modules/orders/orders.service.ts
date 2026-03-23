@@ -161,7 +161,7 @@ export class OrdersService {
     async getOrderById(userId: string, orderId: string) {
         const { data, error } = await supabase
             .from('orders')
-            .select('*, merchant:merchants(*), address:addresses(*), items:order_items(*, product:products(*)), courier:users!courier_id(*)')
+            .select('*, merchant:merchants(*), address:addresses(*), items:order_items(*, product:products(*)), courier:couriers(*, user:users(*))')
             .eq('id', orderId)
             .eq('consumer_id', userId)
             .single();

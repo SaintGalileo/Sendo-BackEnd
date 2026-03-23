@@ -19,7 +19,7 @@ export class NotificationsController {
 
     async readNotifications(req: AuthRequest, res: Response) {
         try {
-            const { notificationIds } = req.body; // array of IDs
+            const { notificationIds } = req.body;
             if (!notificationIds || !Array.isArray(notificationIds)) {
                 return sendResponse(res, 400, false, 'notificationIds array is required');
             }
