@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { MerchantOnboardingService } from './merchant.service';
 import { OrdersService } from '../orders/orders.service';
 import { MerchantEarningsService } from './earnings.service';
+import { OrderStatus } from '../../common/constants/orderStatus';
 import { AuthRequest } from '../../common/middleware/auth.middleware';
 import { sendResponse } from '../../common/utils/response';
 import { getPaginationOptions, formatPaginatedResponse } from '../../common/utils/pagination';
@@ -300,11 +301,12 @@ export class MerchantController {
             const result = await merchantService.getMerchantByUserId(userId);
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
-            const order = await merchantService.updateOrderStatus(result.data.id, req.params.id as string, status);
+            const order = await ordersService.updateOrderStatus(result.data.id, req.params.id as string, status);
             
             // If delivered, update earnings
             if (status === 'delivered') {
-                await earningsService.addEarning(result.data.id, order.total_amount);
+                const amount = order.total_price || order.total_amount; // Check which field is used
+                await earningsService.addEarning(result.data.id, amount);
             }
 
             return sendResponse(res, 200, true, `Order status updated to ${status}`, order);
@@ -337,6 +339,65 @@ export class MerchantController {
 
             const order = await ordersService.declineOrder(result.data.id, req.params.id as string, reason);
             return sendResponse(res, 200, true, 'Order declined', order);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async prepareOrder(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const result = await merchantService.getMerchantByUserId(req.user.id);
+            const order = await ordersService.updateOrderStatus(result.data.id, req.params.id as string, OrderStatus.PREPARING);
+            return sendResponse(res, 200, true, 'Order is now being prepared', order);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async readyForPickupOrder(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const result = await merchantService.getMerchantByUserId(req.user.id);
+            const order = await ordersService.updateOrderStatus(result.data.id, req.params.id as string, OrderStatus.READY_FOR_PICKUP);
+            return sendResponse(res, 200, true, 'Order is ready for pickup', order);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async pickUpOrder(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const result = await merchantService.getMerchantByUserId(req.user.id);
+            const order = await ordersService.updateOrderStatus(result.data.id, req.params.id as string, OrderStatus.PICKED_UP);
+            return sendResponse(res, 200, true, 'Order has been picked up', order);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async onTheWayOrder(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const result = await merchantService.getMerchantByUserId(req.user.id);
+            const order = await ordersService.updateOrderStatus(result.data.id, req.params.id as string, OrderStatus.ON_THE_WAY);
+            return sendResponse(res, 200, true, 'Order is on the way', order);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async deliverOrder(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const result = await merchantService.getMerchantByUserId(req.user.id);
+            const order = await ordersService.updateOrderStatus(result.data.id, req.params.id as string, OrderStatus.DELIVERED);
+            
+            const amount = order.total_price || order.total_amount;
+            await earningsService.addEarning(result.data.id, amount);
+
+            return sendResponse(res, 200, true, 'Order delivered', order);
         } catch (error: any) {
             return sendResponse(res, 500, false, error.message);
         }

@@ -43,7 +43,7 @@ export class OrdersService {
             .select('address, latitude, longitude')
             .eq('id', data.addressId)
             .single();
-        
+
         if (addressError || !address) throw new Error('Delivery address not found');
 
         const deliveryFee = await this.getDeliveryFeeEstimate(merchantId, data.addressId);
@@ -115,7 +115,7 @@ export class OrdersService {
             if (merchantUser?.user_id) {
                 await notificationsService.sendPushNotification(
                     merchantUser.user_id,
-                    'New Order Received! 🛍️',
+                    'New Order Received!',
                     `You have a new order (#${order.id.toString().slice(0, 8)}) for NGN ${order.total_price}`,
                     { orderId: order.id, type: 'new_order' }
                 );
@@ -138,8 +138,20 @@ export class OrdersService {
 
         if (error) throw new Error(error.message);
 
-        // Notify User
+        // Notify User via WebSocket
         socketService.emitToUser(data.consumer_id, 'order_status_changed', data);
+
+        // Notify User via Push
+        try {
+            await notificationsService.sendPushNotification(
+                data.consumer_id,
+                'Order Accepted!',
+                `Your order #${orderId.toString().slice(0, 8)} has been accepted and is being processed.`,
+                { orderId, status: OrderStatus.ACCEPTED, type: 'order_status_update' }
+            );
+        } catch (pushError: any) {
+            console.error('[OrdersService] Failed to send push notification:', pushError.message);
+        }
 
         return data;
     }
@@ -164,8 +176,76 @@ export class OrdersService {
             await supabase.from('orders').update({ payment_status: 'refunded' }).eq('id', orderId);
         }
 
-        // Notify User
+        // Notify User via WebSocket
         socketService.emitToUser(data.consumer_id, 'order_status_changed', data);
+
+        // Notify User via Push
+        try {
+            await notificationsService.sendPushNotification(
+                data.consumer_id,
+                'Order Declined',
+                `Sorry, your order #${orderId.toString().slice(0, 8)} was declined. ${reason ? 'Reason: ' + reason : ''}`,
+                { orderId, status: OrderStatus.CANCELLED, type: 'order_status_update' }
+            );
+        } catch (pushError: any) {
+            console.error('[OrdersService] Failed to send push notification:', pushError.message);
+        }
+
+        return data;
+    }
+
+    async updateOrderStatus(merchantId: string, orderId: string, status: OrderStatus) {
+        // Validate status transition if necessary, but here we trust the merchant app for now
+        const { data, error } = await supabase
+            .from('orders')
+            .update({ status })
+            .eq('id', orderId)
+            .eq('merchant_id', merchantId)
+            .select()
+            .single();
+
+        if (error) throw new Error(error.message);
+
+        // Notify User via WebSocket
+        socketService.emitToUser(data.consumer_id, 'order_status_changed', data);
+
+        // Notify User via Push
+        let title = 'Order Update';
+        let body = `Your order status has changed to ${status.replace('_', ' ')}`;
+
+        switch (status) {
+            case OrderStatus.PREPARING:
+                title = 'Order is being prepared!';
+                body = 'The merchant is now preparing your delicious meal.';
+                break;
+            case OrderStatus.READY_FOR_PICKUP:
+                title = 'Order ready for pickup!';
+                body = 'Your order is ready and waiting for a courier.';
+                break;
+            case OrderStatus.PICKED_UP:
+                title = 'Order picked up!';
+                body = 'A courier has picked up your order and is heading your way.';
+                break;
+            case OrderStatus.ON_THE_WAY:
+                title = 'Order on the way!';
+                body = 'Your courier is nearby and will arrive shortly.';
+                break;
+            case OrderStatus.DELIVERED:
+                title = 'Order Delivered!';
+                body = 'Enjoy your delivery! Please rate your experience.';
+                break;
+        }
+
+        try {
+            await notificationsService.sendPushNotification(
+                data.consumer_id,
+                title,
+                body,
+                { orderId, status, type: 'order_status_update' }
+            );
+        } catch (pushError: any) {
+            console.error('[OrdersService] Failed to send push notification:', pushError.message);
+        }
 
         return data;
     }
@@ -275,7 +355,7 @@ export class OrdersService {
             .select('latitude, longitude')
             .eq('id', merchantId)
             .single();
-        
+
         if (mError || !merchant) throw new Error('Merchant location not found');
 
         // Fetch Address Location
