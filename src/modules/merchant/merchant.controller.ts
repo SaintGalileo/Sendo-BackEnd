@@ -293,6 +293,51 @@ export class MerchantController {
         }
     }
 
+    async getOngoingOrders(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(userId);
+            if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
+
+            const pagination = getPaginationOptions(req.query);
+            const orders = await merchantService.getOngoingOrders(result.data.id, pagination);
+            return sendResponse(res, 200, true, 'Ongoing orders fetched', formatPaginatedResponse(orders.data, orders.totalCount, pagination.page, pagination.limit));
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async getCompletedOrders(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(userId);
+            if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
+
+            const pagination = getPaginationOptions(req.query);
+            const orders = await merchantService.getCompletedOrders(result.data.id, pagination);
+            return sendResponse(res, 200, true, 'Completed orders fetched', formatPaginatedResponse(orders.data, orders.totalCount, pagination.page, pagination.limit));
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async getCancelledOrders(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(userId);
+            if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
+
+            const pagination = getPaginationOptions(req.query);
+            const orders = await merchantService.getCancelledOrders(result.data.id, pagination);
+            return sendResponse(res, 200, true, 'Cancelled orders fetched', formatPaginatedResponse(orders.data, orders.totalCount, pagination.page, pagination.limit));
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
     async updateOrderStatus(req: AuthRequest, res: Response) {
         try {
             const { status } = req.body;

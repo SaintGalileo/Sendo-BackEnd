@@ -1,5 +1,6 @@
 import { supabase } from '../../config/supabase';
 import { SocketService } from '../notifications/socket.service';
+import { OrderStatus } from '../../common/constants/orderStatus';
 
 const socketService = SocketService.getInstance();
 
@@ -253,6 +254,62 @@ export class MerchantOnboardingService {
 
         if (error) throw new Error(error.message);
         return data;
+    }
+
+    async getOngoingOrders(merchantId: string, pagination: any) {
+        const from = pagination.offset;
+        const to = from + pagination.limit - 1;
+
+        const ongoingStatuses = [
+            OrderStatus.ACCEPTED,
+            OrderStatus.PREPARING,
+            OrderStatus.READY_FOR_PICKUP,
+            OrderStatus.PICKED_UP,
+            OrderStatus.ON_THE_WAY
+        ];
+
+        const { data, count, error } = await supabase
+            .from('orders')
+            .select('*, customer:users!consumer_id(id, first_name, last_name, phone, photo_url), items:order_items(*, product:products(*))', { count: 'exact' })
+            .eq('merchant_id', merchantId)
+            .in('status', ongoingStatuses)
+            .order('created_at', { ascending: false })
+            .range(from, to);
+
+        if (error) throw new Error(error.message);
+        return { data: data || [], totalCount: count || 0 };
+    }
+
+    async getCompletedOrders(merchantId: string, pagination: any) {
+        const from = pagination.offset;
+        const to = from + pagination.limit - 1;
+
+        const { data, count, error } = await supabase
+            .from('orders')
+            .select('*, customer:users!consumer_id(id, first_name, last_name, phone, photo_url), items:order_items(*, product:products(*))', { count: 'exact' })
+            .eq('merchant_id', merchantId)
+            .eq('status', OrderStatus.DELIVERED)
+            .order('created_at', { ascending: false })
+            .range(from, to);
+
+        if (error) throw new Error(error.message);
+        return { data: data || [], totalCount: count || 0 };
+    }
+
+    async getCancelledOrders(merchantId: string, pagination: any) {
+        const from = pagination.offset;
+        const to = from + pagination.limit - 1;
+
+        const { data, count, error } = await supabase
+            .from('orders')
+            .select('*, customer:users!consumer_id(id, first_name, last_name, phone, photo_url), items:order_items(*, product:products(*))', { count: 'exact' })
+            .eq('merchant_id', merchantId)
+            .eq('status', OrderStatus.CANCELLED)
+            .order('created_at', { ascending: false })
+            .range(from, to);
+
+        if (error) throw new Error(error.message);
+        return { data: data || [], totalCount: count || 0 };
     }
 
     async updateOrderStatus(merchantId: string, orderId: string, status: string) {

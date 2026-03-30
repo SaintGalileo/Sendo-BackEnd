@@ -39,6 +39,9 @@ router.post('/extra-groups/:groupId/options', merchantController.addExtraOption)
 router.delete('/extra-options/:id', merchantController.deleteExtraOption);
 
 // Orders
+router.get('/orders/ongoing', merchantController.getOngoingOrders);
+router.get('/orders/completed', merchantController.getCompletedOrders);
+router.get('/orders/cancelled', merchantController.getCancelledOrders);
 router.get('/orders', merchantController.getOrders);
 router.get('/orders/:id', merchantController.getOrderById);
 router.post('/orders/:id/accept', merchantController.acceptOrder);
