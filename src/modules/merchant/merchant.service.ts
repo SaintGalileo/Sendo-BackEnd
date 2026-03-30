@@ -270,7 +270,7 @@ export class MerchantOnboardingService {
 
         const { data, count, error } = await supabase
             .from('orders')
-            .select('*, customer:users!consumer_id(id, first_name, last_name, phone), items:order_items(*, product:products(*))', { count: 'exact' })
+            .select('*, consumer:users!consumer_id(id, first_name, last_name, phone), items:order_items(*, product:products(*))', { count: 'exact' })
             .eq('merchant_id', merchantId)
             .in('status', ongoingStatuses)
             .order('created_at', { ascending: false })
@@ -286,7 +286,7 @@ export class MerchantOnboardingService {
 
         const { data, count, error } = await supabase
             .from('orders')
-            .select('*, customer:users!consumer_id(id, first_name, last_name, phone), items:order_items(*, product:products(*))', { count: 'exact' })
+            .select('*, consumer:users!consumer_id(id, first_name, last_name, phone), items:order_items(*, product:products(*))', { count: 'exact' })
             .eq('merchant_id', merchantId)
             .eq('status', OrderStatus.DELIVERED)
             .order('created_at', { ascending: false })
@@ -302,7 +302,7 @@ export class MerchantOnboardingService {
 
         const { data, count, error } = await supabase
             .from('orders')
-            .select('*, customer:users!consumer_id(id, first_name, last_name, phone), items:order_items(*, product:products(*))', { count: 'exact' })
+            .select('*, consumer:users!consumer_id(id, first_name, last_name, phone), items:order_items(*, product:products(*))', { count: 'exact' })
             .eq('merchant_id', merchantId)
             .eq('status', OrderStatus.CANCELLED)
             .order('created_at', { ascending: false })

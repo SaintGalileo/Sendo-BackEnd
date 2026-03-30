@@ -302,7 +302,7 @@ export class MerchantController {
 
             const pagination = getPaginationOptions(req.query);
             const orders = await merchantService.getOngoingOrders(result.data.id, pagination);
-            return sendResponse(res, 200, true, 'Ongoing orders fetched', formatPaginatedResponse(orders.data, orders.totalCount, pagination.page, pagination.limit));
+            return sendResponse(res, 200, true, 'Ongoing orders fetched', orders.data);
         } catch (error: any) {
             return sendResponse(res, 500, false, error.message);
         }
@@ -317,7 +317,7 @@ export class MerchantController {
 
             const pagination = getPaginationOptions(req.query);
             const orders = await merchantService.getCompletedOrders(result.data.id, pagination);
-            return sendResponse(res, 200, true, 'Completed orders fetched', formatPaginatedResponse(orders.data, orders.totalCount, pagination.page, pagination.limit));
+            return sendResponse(res, 200, true, 'Completed orders fetched', orders.data);
         } catch (error: any) {
             return sendResponse(res, 500, false, error.message);
         }
@@ -332,7 +332,7 @@ export class MerchantController {
 
             const pagination = getPaginationOptions(req.query);
             const orders = await merchantService.getCancelledOrders(result.data.id, pagination);
-            return sendResponse(res, 200, true, 'Cancelled orders fetched', formatPaginatedResponse(orders.data, orders.totalCount, pagination.page, pagination.limit));
+            return sendResponse(res, 200, true, 'Cancelled orders fetched', orders.data);
         } catch (error: any) {
             return sendResponse(res, 500, false, error.message);
         }
