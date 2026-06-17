@@ -1,0 +1,15 @@
+How to Use
+To update the FCM token from the consumer app, send a POST request:
+
+Endpoint: POST /api/notifications/fcm-token Authentication: Bearer Token required Body:
+
+json
+{
+    "token": "YOUR_FCM_TOKEN_HERE"
+}
+Response:
+
+json
+{
+    "success": true,
+    "message": "FCM token updated succes

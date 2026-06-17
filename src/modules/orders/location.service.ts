@@ -1,0 +1,66 @@
+import axios from 'axios';
+
+export class LocationService {
+    private readonly GOOGLE_MAPS_API_KEY = 'AIzaSyBo9CUsKlEGUkYTsjdTy5n6Q3X9i7ec-RQ';
+
+    /**
+     * Calculates the distance between two points in kilometers.
+     * Uses Google Distance Matrix API for accurate road distance.
+     */
+    async calculateDistance(origin: { lat: number; lng: number }, destination: { lat: number; lng: number }): Promise<number> {
+        try {
+            const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin.lat},${origin.lng}&destinations=${destination.lat},${destination.lng}&key=${this.GOOGLE_MAPS_API_KEY}`;
+            const response = await axios.get(url);
+
+            if (response.data && response.data.rows?.[0]?.elements?.[0]?.status === 'OK') {
+                const element = response.data.rows[0].elements[0];
+                // Google returns distance in meters
+                return element.distance.value / 1000;
+            }
+
+            console.warn('Google Distance Matrix status not OK, falling back to Haversine');
+        } catch (error) {
+            console.error('Google Distance Matrix API error, falling back to Haversine:', error);
+        }
+
+        return this.haversineDistance(origin, destination);
+    }
+
+    /**
+     * Haversine formula to calculate the great-circle distance between two points.
+     * Returns distance in kilometers.
+     */
+    private haversineDistance(p1: { lat: number; lng: number }, p2: { lat: number; lng: number }): number {
+        const R = 6371; // Earth's radius in km
+        const dLat = (p2.lat - p1.lat) * (Math.PI / 180);
+        const dLng = (p2.lng - p1.lng) * (Math.PI / 180);
+        const a =
+            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(p1.lat * (Math.PI / 180)) * Math.cos(p2.lat * (Math.PI / 180)) *
+            Math.sin(dLng / 2) * Math.sin(dLng / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
+    }
+
+    /**
+     * Calculates the delivery fee based on distance.
+     * Pricing:
+     * - Base fee: 1000 Naira (covers up to 3km)
+     * - Additional: 200 Naira per km after the base distance
+     */
+    calculateDeliveryFee(distanceKm: number): number {
+        const baseFee = 1000;
+        const baseDistance = 3;
+        const perKmFee = 200;
+
+        if (distanceKm <= baseDistance) {
+            return baseFee;
+        }
+
+        const additionalDistance = distanceKm - baseDistance;
+        const totalFee = baseFee + (additionalDistance * perKmFee);
+
+        // Round to nearest hundred (e.g., 2300, 2500)
+        return Math.round(totalFee / 100) * 100;
+    }
+}
