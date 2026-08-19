@@ -129,6 +129,17 @@ export class AuthController {
         return res.status(result.success ? 201 : 400).json(result);
     }
 
+    async adminLogin(req: Request, res: Response) {
+        const { email, password } = req.body || {};
+
+        if (!email || !password) {
+            return res.status(400).json({ success: false, message: 'Email and password are required' });
+        }
+
+        const result = await authService.adminLogin(email, password);
+        return res.status(result.success ? 200 : 401).json(result);
+    }
+
     async sendEmailOTP(req: Request, res: Response) {
         const { email } = req.body || {};
 

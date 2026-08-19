@@ -2,6 +2,7 @@ import { supabase } from '../../config/supabase';
 import { EmailService } from '../notifications/email.service';
 import axios from 'axios';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcrypt';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -512,5 +513,71 @@ export class AuthService {
         }
 
         return { success: true, message: 'Email verified successfully' };
+    }
+
+    async adminLogin(email: string, password: string): Promise<{ success: boolean; message: string; data?: any; token?: string }> {
+        const { data: user, error } = await supabase
+            .from('users')
+            .select('*')
+            .eq('email', email)
+            .eq('is_admin', true)
+            .single();
+
+        if (error || !user) {
+            return { success: false, message: 'Invalid email or password' };
+        }
+
+        if (!user.password_hash) {
+            return { success: false, message: 'Account not configured for password login' };
+        }
+
+        const passwordMatch = await bcrypt.compare(password, user.password_hash);
+        if (!passwordMatch) {
+            return { success: false, message: 'Invalid email or password' };
+        }
+
+        const roles = ['admin'];
+        const { data: merchantData } = await supabase
+            .from('merchants')
+            .select('id')
+            .eq('user_id', user.id)
+            .maybeSingle();
+        if (merchantData) roles.push('merchant');
+
+        const { data: courierData } = await supabase
+            .from('couriers')
+            .select('id')
+            .eq('user_id', user.id)
+            .maybeSingle();
+        if (courierData) roles.push('courier');
+
+        const token = jwt.sign(
+            {
+                id: user.id,
+                email: user.email,
+                role: 'admin',
+                roles,
+            },
+            JWT_SECRET,
+            { expiresIn: '7d' }
+        );
+
+        return {
+            success: true,
+            message: 'Admin login successful',
+            data: {
+                id: user.id,
+                email: user.email,
+                first_name: user.first_name,
+                last_name: user.last_name,
+                role: 'admin',
+                roles,
+            },
+            token,
+        };
+    }
+
+    static async hashPassword(password: string): Promise<string> {
+        return bcrypt.hash(password, 12);
     }
 }

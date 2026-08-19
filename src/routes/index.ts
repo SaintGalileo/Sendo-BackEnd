@@ -16,6 +16,7 @@ import notificationsRoutes from '../modules/notifications/notifications.routes';
 import couponsRoutes from '../modules/coupons/coupons.routes';
 import searchRoutes from '../modules/search/search.routes';
 import { reviewRoutes, storeReviewRoutes, courierReviewRoutes } from '../modules/reviews/reviews.routes';
+import adminRoutes from '../modules/admin/admin.routes';
 
 const router = Router();
 const paymentsController = new PaymentsController();
@@ -54,6 +55,9 @@ router.use('/notifications', notificationsRoutes);
 
 // Unified Search
 router.use('/search', searchRoutes);
+
+// Admin Dashboard
+router.use('/admin', adminRoutes);
 
 router.get('/', (req, res) => {
   res.json({ message: 'API root' });

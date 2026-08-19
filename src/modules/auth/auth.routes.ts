@@ -15,6 +15,9 @@ router.post('/register-courier', authController.registerCourier);
 router.post('/register/rider', authController.registerCourier); // Alias for Rider app
 router.post('/register-merchant', authController.registerMerchant);
 
+// Admin login (email + password)
+router.post('/admin/login', authController.adminLogin);
+
 // Email OTP (For SeerBit and other verifications) - Authenticated
 router.post('/otp/email/send', authMiddleware, authController.sendEmailOTP);
 router.post('/otp/email/verify', authMiddleware, authController.verifyEmailOTP);
