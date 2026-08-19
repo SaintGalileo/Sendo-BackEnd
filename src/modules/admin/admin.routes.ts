@@ -84,7 +84,6 @@ router.post('/dispatch/orders/:orderId/assign', dispatchCtrl.assignCourier);
 
 // ── Transactions ──
 router.get('/transactions/report', transactionsCtrl.getTransactionReport);
-router.get('/transactions/:type/withdraw-requests', transactionsCtrl.getWithdrawRequests);
 router.get('/transactions/account', transactionsCtrl.getAccountTransactions);
 router.get('/transactions/store/withdrawals', transactionsCtrl.getStoreWithdrawals);
 router.get('/transactions/courier/withdrawals', transactionsCtrl.getCourierWithdrawals);
@@ -95,6 +94,7 @@ router.get('/transactions/reports/day-wise', transactionsCtrl.getDayWiseReport);
 router.get('/transactions/reports/item-wise', transactionsCtrl.getItemWiseReport);
 router.get('/transactions/reports/store-wise', transactionsCtrl.getStoreWiseReport);
 router.get('/transactions/reports/disbursement', transactionsCtrl.getDisbursementReport);
+router.get('/transactions/:type/withdraw-requests', transactionsCtrl.getWithdrawRequests);
 
 // ── Coupons ──
 router.get('/coupons', couponsCtrl.listCoupons);
