@@ -27,6 +27,7 @@ async function main() {
     sql: `
       ALTER TABLE public.users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT false;
       ALTER TABLE public.users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+      ALTER TABLE public.users ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN NOT NULL DEFAULT false;
     `,
   });
 
@@ -51,19 +52,24 @@ async function main() {
     .maybeSingle();
 
   if (existing) {
-    // Update existing user to be admin
+    // Update existing user to be super-admin
     const { error } = await supabase
       .from("users")
-      .update({ is_admin: true, password_hash: passwordHash })
+      .update({
+        is_admin: true,
+        is_super_admin: true,
+        role: "admin",
+        password_hash: passwordHash,
+      })
       .eq("id", existing.id);
 
     if (error) {
       console.error("Failed to update existing user:", error.message);
       process.exit(1);
     }
-    console.log(`Updated existing user ${ADMIN_EMAIL} as admin.`);
+    console.log(`Updated existing user ${ADMIN_EMAIL} as super-admin.`);
   } else {
-    // Insert new admin user
+    // Insert new super-admin user
     const { error } = await supabase.from("users").insert({
       email: ADMIN_EMAIL,
       phone: ADMIN_PHONE,
@@ -71,6 +77,7 @@ async function main() {
       last_name: ADMIN_LAST_NAME,
       role: "admin",
       is_admin: true,
+      is_super_admin: true,
       password_hash: passwordHash,
     });
 
@@ -79,7 +86,7 @@ async function main() {
       console.error("Detail:", error.details);
       process.exit(1);
     }
-    console.log(`Created admin user: ${ADMIN_EMAIL}`);
+    console.log(`Created super-admin user: ${ADMIN_EMAIL}`);
   }
 
   console.log("\nAdmin credentials:");

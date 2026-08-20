@@ -55,6 +55,8 @@ const rentalCtrl = new AdminRentalController();
 // All admin routes require authentication + admin role
 router.use(authMiddleware, roleMiddleware(['admin']));
 
+const requireSuperAdmin = roleMiddleware(['super_admin']);
+
 // Health check
 router.get('/health', (_req, res) => res.json({ success: true, message: 'Admin API healthy' }));
 
@@ -67,11 +69,18 @@ router.get('/orders/:id', ordersCtrl.getOrder);
 router.post('/orders/:id/cancel', ordersCtrl.cancelOrder);
 
 // ── Users ──
+router.get('/users/overview', (req, res) => usersCtrl.getUsersOverview(req, res));
 router.get('/customers', usersCtrl.listCustomers);
 router.get('/customers/:id', usersCtrl.getCustomer);
 router.get('/couriers', usersCtrl.listCouriers);
 router.get('/couriers/:id', usersCtrl.getCourier);
 router.get('/merchants', usersCtrl.listMerchants);
+
+// ── Employees (super-admin only) ──
+router.get('/employees', requireSuperAdmin, (req, res) => usersCtrl.listEmployees(req, res));
+router.post('/employees', requireSuperAdmin, (req, res) => usersCtrl.createEmployee(req, res));
+router.put('/employees/:id', requireSuperAdmin, (req, res) => usersCtrl.updateEmployee(req, res));
+router.put('/employees/:id/status', requireSuperAdmin, (req, res) => usersCtrl.updateEmployeeStatus(req as any, res));
 
 // ── Stores ──
 router.get('/stores', storesCtrl.listStores);
@@ -79,12 +88,15 @@ router.get('/stores/:id', storesCtrl.getStore);
 router.put('/stores/:id/status', storesCtrl.updateStoreStatus);
 
 // ── Dispatch ──
+router.get('/dispatch/counts', dispatchCtrl.getCounts);
 router.get('/dispatch/orders/available', dispatchCtrl.listAvailableOrders);
+router.get('/dispatch/orders/ongoing', dispatchCtrl.listOngoingOrders);
 router.post('/dispatch/orders/:orderId/assign', dispatchCtrl.assignCourier);
 
 // ── Transactions ──
 router.get('/transactions/report', transactionsCtrl.getTransactionReport);
 router.get('/transactions/account', transactionsCtrl.getAccountTransactions);
+router.post('/transactions/account', transactionsCtrl.createAccountTransaction);
 router.get('/transactions/store/withdrawals', transactionsCtrl.getStoreWithdrawals);
 router.get('/transactions/courier/withdrawals', transactionsCtrl.getCourierWithdrawals);
 router.get('/transactions/store-disbursements', transactionsCtrl.getStoreDisbursements);
@@ -94,6 +106,16 @@ router.get('/transactions/reports/day-wise', transactionsCtrl.getDayWiseReport);
 router.get('/transactions/reports/item-wise', transactionsCtrl.getItemWiseReport);
 router.get('/transactions/reports/store-wise', transactionsCtrl.getStoreWiseReport);
 router.get('/transactions/reports/disbursement', transactionsCtrl.getDisbursementReport);
+// Static report paths MUST be registered before /:type/withdraw-requests
+router.get('/transactions/reports/order', transactionsCtrl.getOrderReport);
+router.get('/transactions/reports/expense', transactionsCtrl.getExpenseReport);
+router.get('/transactions/reports/vendor-wise-taxes', transactionsCtrl.getVendorWiseTaxesReport);
+router.get('/transactions/reports/parcel-wise-taxes', transactionsCtrl.getParcelWiseTaxesReport);
+router.get('/transactions/rental/reports/transaction', transactionsCtrl.getRentalTransactionReport);
+router.get('/transactions/rental/reports/vehicle', transactionsCtrl.getRentalVehicleReport);
+router.get('/transactions/rental/reports/provider-wise', transactionsCtrl.getRentalProviderWiseReport);
+router.get('/transactions/rental/reports/trip', transactionsCtrl.getRentalTripReport);
+router.get('/transactions/rental/reports/provider-wise-taxes', transactionsCtrl.getRentalProviderWiseTaxesReport);
 router.get('/transactions/:type/withdraw-requests', transactionsCtrl.getWithdrawRequests);
 
 // ── Coupons ──
@@ -173,22 +195,51 @@ router.get('/refunds/:id', refundsCtrl.getById);
 router.post('/refunds/:id/approve', refundsCtrl.approve);
 router.post('/refunds/:id/reject', refundsCtrl.reject);
 
-// ── Settings ──
+// ── Settings (reads: all admins; privileged writes: super-admin) ──
 router.get('/settings/business', settingsCtrl.getBusinessSettings);
-router.put('/settings/business', settingsCtrl.updateBusinessSettings);
+router.put('/settings/business', requireSuperAdmin, settingsCtrl.updateBusinessSettings);
 router.get('/settings/tax', settingsCtrl.getTaxSettings);
-router.put('/settings/tax/:id', settingsCtrl.updateTaxSettings);
+router.post('/settings/tax', requireSuperAdmin, settingsCtrl.createTax);
+router.put('/settings/tax/:id', requireSuperAdmin, settingsCtrl.updateTaxSettings);
 router.get('/settings/payment-methods', settingsCtrl.getPaymentMethods);
+router.put('/settings/payment-methods', requireSuperAdmin, settingsCtrl.updatePaymentMethods);
+router.get('/settings/analytic', settingsCtrl.getAnalyticSettings);
+router.put('/settings/analytic', requireSuperAdmin, settingsCtrl.updateAnalyticSettings);
+router.get('/settings/websocket', settingsCtrl.getWebsocketSettings);
+router.put('/settings/websocket', requireSuperAdmin, settingsCtrl.updateWebsocketSettings);
+router.get('/settings/ai', settingsCtrl.getAiSettings);
+router.put('/settings/ai', requireSuperAdmin, settingsCtrl.updateAiSettings);
+router.get('/settings/subscription', settingsCtrl.getSubscriptionSettings);
+router.put('/settings/subscription', requireSuperAdmin, settingsCtrl.updateSubscriptionSettings);
+router.get('/settings/subscription/packages', settingsCtrl.getSubscriptionPackages);
+router.put('/settings/subscription/packages', requireSuperAdmin, settingsCtrl.updateSubscriptionPackages);
+router.get('/settings/subscription/subscribers', settingsCtrl.getSubscriptionSubscribers);
+router.get('/settings/modules', settingsCtrl.getModules);
+router.put('/settings/modules', requireSuperAdmin, settingsCtrl.updateModules);
+router.get('/settings/fcm', settingsCtrl.getFcmMessages);
+router.put('/settings/fcm', settingsCtrl.updateFcmMessages);
+router.get('/settings/fcm-config', settingsCtrl.getFcmConfig);
+router.put('/settings/fcm-config', requireSuperAdmin, settingsCtrl.updateFcmConfig);
+router.get('/settings/notifications', settingsCtrl.getNotificationChannels);
+router.put('/settings/notifications', settingsCtrl.updateNotificationChannels);
+router.get('/settings/sms', settingsCtrl.getSmsSettings);
+router.put('/settings/sms', requireSuperAdmin, settingsCtrl.updateSmsSettings);
+router.get('/settings/app', settingsCtrl.getAppSettings);
+router.put('/settings/app', requireSuperAdmin, settingsCtrl.updateAppSettings);
+router.get('/settings/login', settingsCtrl.getLoginSettings);
+router.put('/settings/login', requireSuperAdmin, settingsCtrl.updateLoginSettings);
+router.get('/settings/cms/:pageKey', settingsCtrl.getCmsPage);
+router.put('/settings/cms/:pageKey', settingsCtrl.updateCmsPage);
 
-// ── Zones ──
+// ── Zones (read: all admins; mutations: super-admin) ──
 router.get('/zones', zonesCtrl.listZones);
-router.post('/zones', zonesCtrl.createZone);
-router.put('/zones/:id', zonesCtrl.updateZone);
-router.delete('/zones/:id', zonesCtrl.deleteZone);
+router.post('/zones', requireSuperAdmin, zonesCtrl.createZone);
+router.put('/zones/:id', requireSuperAdmin, zonesCtrl.updateZone);
+router.delete('/zones/:id', requireSuperAdmin, zonesCtrl.deleteZone);
 
 // ── Delivery ──
 router.get('/delivery/configuration', deliveryCtrl.getDeliveryConfig);
-router.put('/delivery/configuration', deliveryCtrl.updateDeliveryConfig);
+router.put('/delivery/configuration', requireSuperAdmin, deliveryCtrl.updateDeliveryConfig);
 router.get('/delivery/vehicle-categories', deliveryCtrl.getVehicleCategories);
 router.put('/delivery/vehicle-categories/:id', deliveryCtrl.updateVehicleCategory);
 

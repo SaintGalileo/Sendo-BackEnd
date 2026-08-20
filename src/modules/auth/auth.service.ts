@@ -536,7 +536,10 @@ export class AuthService {
             return { success: false, message: 'Invalid email or password' };
         }
 
+        const isSuperAdmin = Boolean(user.is_super_admin);
         const roles = ['admin'];
+        if (isSuperAdmin) roles.push('super_admin');
+
         const { data: merchantData } = await supabase
             .from('merchants')
             .select('id')
@@ -551,11 +554,13 @@ export class AuthService {
             .maybeSingle();
         if (courierData) roles.push('courier');
 
+        const primaryRole = isSuperAdmin ? 'super_admin' : 'admin';
+
         const token = jwt.sign(
             {
                 id: user.id,
                 email: user.email,
-                role: 'admin',
+                role: primaryRole,
                 roles,
             },
             JWT_SECRET,
@@ -570,11 +575,126 @@ export class AuthService {
                 email: user.email,
                 first_name: user.first_name,
                 last_name: user.last_name,
-                role: 'admin',
+                phone: user.phone || null,
+                role: primaryRole,
                 roles,
+                is_super_admin: isSuperAdmin,
             },
             token,
         };
+    }
+
+    async adminMe(userId: string): Promise<{ success: boolean; message: string; data?: any }> {
+        const { data: user, error } = await supabase
+            .from('users')
+            .select('id, email, first_name, last_name, phone, is_admin, is_super_admin, created_at')
+            .eq('id', userId)
+            .eq('is_admin', true)
+            .single();
+
+        if (error || !user) {
+            return { success: false, message: 'Admin profile not found' };
+        }
+
+        const isSuperAdmin = Boolean(user.is_super_admin);
+        const roles = ['admin'];
+        if (isSuperAdmin) roles.push('super_admin');
+        const primaryRole = isSuperAdmin ? 'super_admin' : 'admin';
+
+        return {
+            success: true,
+            message: 'Admin profile fetched',
+            data: {
+                id: user.id,
+                email: user.email,
+                first_name: user.first_name,
+                last_name: user.last_name,
+                phone: user.phone || null,
+                role: primaryRole,
+                roles,
+                is_super_admin: isSuperAdmin,
+                created_at: user.created_at,
+            },
+        };
+    }
+
+    async updateAdminProfile(
+        userId: string,
+        input: { first_name?: string; last_name?: string; phone?: string | null }
+    ): Promise<{ success: boolean; message: string; data?: any }> {
+        const { data: existing, error: findError } = await supabase
+            .from('users')
+            .select('id')
+            .eq('id', userId)
+            .eq('is_admin', true)
+            .single();
+
+        if (findError || !existing) {
+            return { success: false, message: 'Admin profile not found' };
+        }
+
+        const patch: Record<string, unknown> = {};
+        if (typeof input.first_name === 'string') patch.first_name = input.first_name.trim();
+        if (typeof input.last_name === 'string') patch.last_name = input.last_name.trim();
+        if (input.phone !== undefined) {
+            const phone = typeof input.phone === 'string' ? input.phone.trim() : '';
+            patch.phone = phone || null;
+        }
+
+        if (Object.keys(patch).length === 0) {
+            return { success: false, message: 'No profile fields to update' };
+        }
+
+        const { error: updateError } = await supabase.from('users').update(patch).eq('id', userId);
+        if (updateError) {
+            return { success: false, message: updateError.message || 'Failed to update profile' };
+        }
+
+        return this.adminMe(userId);
+    }
+
+    async changeAdminPassword(
+        userId: string,
+        currentPassword: string,
+        newPassword: string
+    ): Promise<{ success: boolean; message: string }> {
+        if (!currentPassword || !newPassword) {
+            return { success: false, message: 'Current and new password are required' };
+        }
+        if (newPassword.length < 8) {
+            return { success: false, message: 'New password must be at least 8 characters' };
+        }
+
+        const { data: user, error } = await supabase
+            .from('users')
+            .select('id, password_hash')
+            .eq('id', userId)
+            .eq('is_admin', true)
+            .single();
+
+        if (error || !user) {
+            return { success: false, message: 'Admin profile not found' };
+        }
+        if (!user.password_hash) {
+            return { success: false, message: 'Account not configured for password login' };
+        }
+
+        const match = await bcrypt.compare(currentPassword, user.password_hash);
+        if (!match) {
+            return { success: false, message: 'Current password is incorrect' };
+        }
+
+        const password_hash = await AuthService.hashPassword(newPassword);
+        const { error: updateError } = await supabase
+            .from('users')
+            .update({ password_hash })
+            .eq('id', userId);
+
+        if (updateError) {
+            return { success: false, message: updateError.message || 'Failed to update password' };
+        }
+
+        return { success: true, message: 'Password updated' };
     }
 
     static async hashPassword(password: string): Promise<string> {

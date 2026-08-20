@@ -13,6 +13,20 @@ export class AdminDispatchController {
         return res.status(result.success ? 200 : 500).json(result);
     }
 
+    async listOngoingOrders(req: Request, res: Response) {
+        const { page, limit } = req.query;
+        const result = await service.listOngoingOrders(
+            page ? Number(page) : undefined,
+            limit ? Number(limit) : undefined,
+        );
+        return res.status(result.success ? 200 : 500).json(result);
+    }
+
+    async getCounts(_req: Request, res: Response) {
+        const result = await service.getCounts();
+        return res.status(result.success ? 200 : 500).json(result);
+    }
+
     async assignCourier(req: Request, res: Response) {
         const { courierId } = req.body || {};
         if (!courierId) {

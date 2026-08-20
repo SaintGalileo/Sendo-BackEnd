@@ -1,26 +1,34 @@
 import axios from 'axios';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 export class LocationService {
-    private readonly GOOGLE_MAPS_API_KEY = 'AIzaSyBo9CUsKlEGUkYTsjdTy5n6Q3X9i7ec-RQ';
+    private readonly googleMapsApiKey =
+        process.env.GOOGLE_MAPS_API_KEY ||
+        process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ||
+        '';
 
     /**
      * Calculates the distance between two points in kilometers.
      * Uses Google Distance Matrix API for accurate road distance.
      */
     async calculateDistance(origin: { lat: number; lng: number }, destination: { lat: number; lng: number }): Promise<number> {
-        try {
-            const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin.lat},${origin.lng}&destinations=${destination.lat},${destination.lng}&key=${this.GOOGLE_MAPS_API_KEY}`;
-            const response = await axios.get(url);
+        if (this.googleMapsApiKey) {
+            try {
+                const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin.lat},${origin.lng}&destinations=${destination.lat},${destination.lng}&key=${this.googleMapsApiKey}`;
+                const response = await axios.get(url);
 
-            if (response.data && response.data.rows?.[0]?.elements?.[0]?.status === 'OK') {
-                const element = response.data.rows[0].elements[0];
-                // Google returns distance in meters
-                return element.distance.value / 1000;
+                if (response.data && response.data.rows?.[0]?.elements?.[0]?.status === 'OK') {
+                    const element = response.data.rows[0].elements[0];
+                    // Google returns distance in meters
+                    return element.distance.value / 1000;
+                }
+
+                console.warn('Google Distance Matrix status not OK, falling back to Haversine');
+            } catch (error) {
+                console.error('Google Distance Matrix API error, falling back to Haversine:', error);
             }
-
-            console.warn('Google Distance Matrix status not OK, falling back to Haversine');
-        } catch (error) {
-            console.error('Google Distance Matrix API error, falling back to Haversine:', error);
         }
 
         return this.haversineDistance(origin, destination);

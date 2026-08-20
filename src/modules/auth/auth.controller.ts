@@ -140,6 +140,35 @@ export class AuthController {
         return res.status(result.success ? 200 : 401).json(result);
     }
 
+    async adminMe(req: AuthRequest, res: Response) {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ success: false, message: 'Unauthorized' });
+        }
+        const result = await authService.adminMe(userId);
+        return res.status(result.success ? 200 : 404).json(result);
+    }
+
+    async updateAdminProfile(req: AuthRequest, res: Response) {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ success: false, message: 'Unauthorized' });
+        }
+        const { first_name, last_name, phone } = req.body || {};
+        const result = await authService.updateAdminProfile(userId, { first_name, last_name, phone });
+        return res.status(result.success ? 200 : 400).json(result);
+    }
+
+    async changeAdminPassword(req: AuthRequest, res: Response) {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ success: false, message: 'Unauthorized' });
+        }
+        const { currentPassword, newPassword } = req.body || {};
+        const result = await authService.changeAdminPassword(userId, currentPassword, newPassword);
+        return res.status(result.success ? 200 : 400).json(result);
+    }
+
     async sendEmailOTP(req: Request, res: Response) {
         const { email } = req.body || {};
 

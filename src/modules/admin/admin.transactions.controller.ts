@@ -3,13 +3,16 @@ import { AdminTransactionsService } from './admin.transactions.service';
 
 const service = new AdminTransactionsService();
 
+function dateRangeFromQuery(query: Request['query']) {
+    const from = (query.from || query.dateFrom) as string | undefined;
+    const to = (query.to || query.dateTo) as string | undefined;
+    return { from, to };
+}
+
 export class AdminTransactionsController {
     async getTransactionReport(req: Request, res: Response) {
-        const { dateFrom, dateTo } = req.query;
-        const result = await service.getTransactionReport(
-            dateFrom as string,
-            dateTo as string
-        );
+        const { from, to } = dateRangeFromQuery(req.query);
+        const result = await service.getTransactionReport(from, to);
         return res.status(result.success ? 200 : 500).json(result);
     }
 
@@ -25,37 +28,42 @@ export class AdminTransactionsController {
     }
 
     async getAccountTransactions(req: Request, res: Response) {
-        const { page, limit, dateFrom, dateTo, status, search } = req.query;
+        const { page, limit, dateFrom, dateTo, status, search, from, to } = req.query;
         const result = await service.getAccountTransactions({
             page: page ? Number(page) : undefined,
             limit: limit ? Number(limit) : undefined,
-            dateFrom: dateFrom as string,
-            dateTo: dateTo as string,
+            dateFrom: (dateFrom || from) as string,
+            dateTo: (dateTo || to) as string,
             status: status as string,
             search: search as string,
         });
         return res.json(result);
     }
 
+    async createAccountTransaction(req: Request, res: Response) {
+        const result = await service.createAccountTransaction(req.body || {});
+        return res.status(result.success ? 201 : 400).json(result);
+    }
+
     async getStoreWithdrawals(req: Request, res: Response) {
-        const { page, limit, dateFrom, dateTo, status } = req.query;
+        const { page, limit, dateFrom, dateTo, status, from, to } = req.query;
         const result = await service.getStoreWithdrawals({
             page: page ? Number(page) : undefined,
             limit: limit ? Number(limit) : undefined,
-            dateFrom: dateFrom as string,
-            dateTo: dateTo as string,
+            dateFrom: (dateFrom || from) as string,
+            dateTo: (dateTo || to) as string,
             status: status as string,
         });
         return res.json(result);
     }
 
     async getCourierWithdrawals(req: Request, res: Response) {
-        const { page, limit, dateFrom, dateTo, status } = req.query;
+        const { page, limit, dateFrom, dateTo, status, from, to } = req.query;
         const result = await service.getCourierWithdrawals({
             page: page ? Number(page) : undefined,
             limit: limit ? Number(limit) : undefined,
-            dateFrom: dateFrom as string,
-            dateTo: dateTo as string,
+            dateFrom: (dateFrom || from) as string,
+            dateTo: (dateTo || to) as string,
             status: status as string,
         });
         return res.json(result);
@@ -91,8 +99,8 @@ export class AdminTransactionsController {
     }
 
     async getDayWiseReport(req: Request, res: Response) {
-        const { dateFrom, dateTo } = req.query;
-        const result = await service.getDayWiseReport(dateFrom as string, dateTo as string);
+        const { from, to } = dateRangeFromQuery(req.query);
+        const result = await service.getDayWiseReport(from, to);
         return res.status(result.success ? 200 : 500).json(result);
     }
 
@@ -108,6 +116,59 @@ export class AdminTransactionsController {
 
     async getDisbursementReport(_req: Request, res: Response) {
         const result = await service.getDisbursementReport();
+        return res.json(result);
+    }
+
+    async getOrderReport(req: Request, res: Response) {
+        const { from, to } = dateRangeFromQuery(req.query);
+        const result = await service.getOrderReport(from, to);
+        return res.json(result);
+    }
+
+    async getExpenseReport(req: Request, res: Response) {
+        const { from, to } = dateRangeFromQuery(req.query);
+        const result = await service.getExpenseReport(from, to);
+        return res.json(result);
+    }
+
+    async getVendorWiseTaxesReport(req: Request, res: Response) {
+        const { from, to } = dateRangeFromQuery(req.query);
+        const result = await service.getVendorWiseTaxesReport(from, to);
+        return res.json(result);
+    }
+
+    async getParcelWiseTaxesReport(req: Request, res: Response) {
+        const { from, to } = dateRangeFromQuery(req.query);
+        const result = await service.getParcelWiseTaxesReport(from, to);
+        return res.json(result);
+    }
+
+    async getRentalTransactionReport(req: Request, res: Response) {
+        const { from, to } = dateRangeFromQuery(req.query);
+        const result = await service.getRentalTransactionReport(from, to);
+        return res.json(result);
+    }
+
+    async getRentalVehicleReport(_req: Request, res: Response) {
+        const result = await service.getRentalVehicleReport();
+        return res.json(result);
+    }
+
+    async getRentalProviderWiseReport(req: Request, res: Response) {
+        const { from, to } = dateRangeFromQuery(req.query);
+        const result = await service.getRentalProviderWiseReport(from, to);
+        return res.json(result);
+    }
+
+    async getRentalTripReport(req: Request, res: Response) {
+        const { from, to } = dateRangeFromQuery(req.query);
+        const result = await service.getRentalTripReport(from, to);
+        return res.json(result);
+    }
+
+    async getRentalProviderWiseTaxesReport(req: Request, res: Response) {
+        const { from, to } = dateRangeFromQuery(req.query);
+        const result = await service.getRentalProviderWiseTaxesReport(from, to);
         return res.json(result);
     }
 }

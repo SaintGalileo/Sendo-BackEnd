@@ -18,6 +18,9 @@ router.post('/register-merchant', authController.registerMerchant);
 // Admin login (email + password)
 // Note: keep this route path stable because Sendo-v2 proxies it at /api/auth/admin/login.
 router.post('/admin/login', authController.adminLogin);
+router.get('/admin/me', authMiddleware, authController.adminMe);
+router.put('/admin/me', authMiddleware, authController.updateAdminProfile);
+router.put('/admin/password', authMiddleware, authController.changeAdminPassword);
 
 // Email OTP (For SeerBit and other verifications) - Authenticated
 router.post('/otp/email/send', authMiddleware, authController.sendEmailOTP);

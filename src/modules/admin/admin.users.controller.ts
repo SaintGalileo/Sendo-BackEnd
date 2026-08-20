@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { AuthRequest } from '../../common/middleware/auth.middleware';
 import { AdminUsersService } from './admin.users.service';
 
 const service = new AdminUsersService();
@@ -45,5 +46,72 @@ export class AdminUsersController {
             limit: limit ? Number(limit) : undefined,
         });
         return res.status(result.success ? 200 : 500).json(result);
+    }
+
+    async getUsersOverview(_req: Request, res: Response) {
+        try {
+            const result = await service.getUsersOverview();
+            return res.json(result);
+        } catch (err: any) {
+            return res.status(500).json({
+                success: false,
+                message: err?.message || 'Failed to load users overview',
+                data: null,
+            });
+        }
+    }
+
+    async listEmployees(req: Request, res: Response) {
+        const { search, page, limit } = req.query;
+        const result = await service.listEmployees({
+            search: search as string,
+            page: page ? Number(page) : undefined,
+            limit: limit ? Number(limit) : undefined,
+        });
+        return res.status(result.success ? 200 : 500).json(result);
+    }
+
+    async createEmployee(req: Request, res: Response) {
+        const { email, password, first_name, last_name, phone } = req.body || {};
+        const result = await service.createEmployee({
+            email,
+            password,
+            first_name,
+            last_name,
+            phone,
+        });
+        if (!result.success) {
+            const status = result.message?.includes('already exists') ? 409 : 400;
+            return res.status(status).json(result);
+        }
+        return res.status(201).json(result);
+    }
+
+    async updateEmployee(req: Request, res: Response) {
+        const result = await service.updateEmployee(req.params.id as string, req.body || {});
+        if (!result.success) {
+            const status = result.message === 'Employee not found' ? 404 : 400;
+            return res.status(status).json(result);
+        }
+        return res.json(result);
+    }
+
+    async updateEmployeeStatus(req: AuthRequest, res: Response) {
+        const active = Boolean(req.body?.active);
+        const actorId = req.user?.id as string;
+        if (!actorId) {
+            return res.status(401).json({ success: false, message: 'Unauthorized', data: null });
+        }
+        const result = await service.updateEmployeeStatus(req.params.id as string, active, actorId);
+        if (!result.success) {
+            const status =
+                result.message === 'Employee not found'
+                    ? 404
+                    : result.message?.includes('last remaining') || result.message?.includes('own account')
+                      ? 403
+                      : 400;
+            return res.status(status).json(result);
+        }
+        return res.json(result);
     }
 }

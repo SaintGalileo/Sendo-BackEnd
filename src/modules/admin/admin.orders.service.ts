@@ -58,17 +58,33 @@ export class AdminOrdersService {
             .from('orders')
             .select(`
                 *,
-                merchant:merchants!orders_merchant_id_fkey(id, name, type, phone, address, logo_url),
+                merchant:merchants!orders_merchant_id_fkey(id, name, type, phone, address, logo_url, latitude, longitude),
                 consumer:users!orders_consumer_id_fkey(id, first_name, last_name, phone, email),
-                courier:couriers!orders_courier_id_fkey(id, name, vehicle_type, plate_number),
+                courier:couriers!orders_courier_id_fkey(id, name, vehicle_type, plate_number, location:courier_locations(lat, lng, updated_at)),
                 order_items(*)
             `)
             .eq('id', id)
             .single();
 
         if (error) {
-            console.error('Error fetching order:', error);
-            return { success: false, message: error.message, data: null };
+            // Fallback without location join if relation is missing
+            const fallback = await supabase
+                .from('orders')
+                .select(`
+                    *,
+                    merchant:merchants!orders_merchant_id_fkey(id, name, type, phone, address, logo_url, latitude, longitude),
+                    consumer:users!orders_consumer_id_fkey(id, first_name, last_name, phone, email),
+                    courier:couriers!orders_courier_id_fkey(id, name, vehicle_type, plate_number),
+                    order_items(*)
+                `)
+                .eq('id', id)
+                .single();
+
+            if (fallback.error) {
+                console.error('Error fetching order:', fallback.error);
+                return { success: false, message: fallback.error.message, data: null };
+            }
+            return { success: true, data: fallback.data };
         }
 
         return { success: true, data };
