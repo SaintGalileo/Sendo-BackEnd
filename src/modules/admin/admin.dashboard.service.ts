@@ -5,6 +5,7 @@ const STATUSES = [
     'accepted',
     'preparing',
     'ready_for_pickup',
+    'picked_up',
     'on_the_way',
     'delivered',
     'cancelled',
@@ -22,6 +23,8 @@ export class AdminDashboardService {
             revenueResult,
             recentOrdersResult,
             statusResults,
+            refundedPayResult,
+            failedPayResult,
             topStoresRawResult,
             orderItemsRawResult,
             salesSeriesResult,
@@ -31,11 +34,11 @@ export class AdminDashboardService {
             supabase.from('merchants').select('*', { count: 'exact', head: true }),
             supabase.from('couriers').select('*', { count: 'exact', head: true }),
             supabase.from('products').select('*', { count: 'exact', head: true }),
-            supabase.from('orders').select('total_amount').eq('order_status', 'delivered'),
+            supabase.from('orders').select('total_amount, total_price').eq('status', 'delivered'),
             supabase
                 .from('orders')
                 .select(`
-                    id, order_number, order_status, total_amount, created_at,
+                    id, order_number, status, total_amount, total_price, created_at,
                     merchant:merchants!orders_merchant_id_fkey(name),
                     consumer:users!orders_consumer_id_fkey(first_name, last_name)
                 `)
@@ -46,9 +49,17 @@ export class AdminDashboardService {
                     supabase
                         .from('orders')
                         .select('*', { count: 'exact', head: true })
-                        .eq('order_status', s),
+                        .eq('status', s),
                 ),
             ),
+            supabase
+                .from('orders')
+                .select('*', { count: 'exact', head: true })
+                .eq('payment_status', 'refunded'),
+            supabase
+                .from('orders')
+                .select('*', { count: 'exact', head: true })
+                .eq('payment_status', 'failed'),
             // Cap scan size — full table scans were very slow over the tunnel.
             supabase
                 .from('orders')
@@ -63,14 +74,14 @@ export class AdminDashboardService {
             supabase
                 .from('orders')
                 .select('total_amount, created_at')
-                .eq('order_status', 'delivered')
+                .eq('status', 'delivered')
                 .order('created_at', { ascending: false })
                 .limit(365),
         ]);
 
         const totalRevenue = (revenueResult.data || []).reduce(
-            (sum: number, o: { total_amount?: number | string }) =>
-                sum + (Number(o.total_amount) || 0),
+            (sum: number, o: { total_amount?: number | string; total_price?: number | string }) =>
+                sum + (Number(o.total_amount ?? o.total_price) || 0),
             0,
         );
 
@@ -78,6 +89,8 @@ export class AdminDashboardService {
         STATUSES.forEach((s, i) => {
             orderStatusCounts[s] = statusResults[i]?.count || 0;
         });
+        orderStatusCounts.refunded = refundedPayResult.count || 0;
+        orderStatusCounts.failed = failedPayResult.count || 0;
 
         const storeOrderMap: Record<string, { id: string; name: string; orders: number }> = {};
         for (const o of topStoresRawResult.data || []) {
@@ -113,7 +126,7 @@ export class AdminDashboardService {
         for (const row of salesSeriesResult.data || []) {
             const day = row.created_at?.slice(0, 10);
             if (!day) continue;
-            dayMap[day] = (dayMap[day] || 0) + (Number(row.total_amount) || 0);
+            dayMap[day] = (dayMap[day] || 0) + (Number(row.total_amount ?? row.total_price) || 0);
         }
         const salesSeries = Object.entries(dayMap)
             .sort(([a], [b]) => a.localeCompare(b))
@@ -132,7 +145,11 @@ export class AdminDashboardService {
                 totalCouriers: couriersResult.count || 0,
                 totalItems: itemsResult.count || 0,
                 totalRevenue,
-                recentOrders: recentOrdersResult.data || [],
+                recentOrders: (recentOrdersResult.data || []).map((row: Record<string, unknown>) => ({
+                    ...row,
+                    order_status: row.order_status || row.status,
+                    total_amount: row.total_amount ?? row.total_price,
+                })),
                 orderStatusCounts,
                 topSellingStores,
                 popularStores,

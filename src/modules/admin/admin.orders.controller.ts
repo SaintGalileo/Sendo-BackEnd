@@ -16,6 +16,11 @@ export class AdminOrdersController {
         return res.status(result.success ? 200 : 500).json(result);
     }
 
+    async getCounts(_req: Request, res: Response) {
+        const result = await service.getCounts();
+        return res.status(result.success ? 200 : 500).json(result);
+    }
+
     async getOrder(req: Request, res: Response) {
         const result = await service.getOrder(req.params.id as string);
         if (!result.success) return res.status(404).json(result);

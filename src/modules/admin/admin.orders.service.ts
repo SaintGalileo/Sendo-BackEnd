@@ -25,7 +25,15 @@ export class AdminOrdersService {
             .range(offset, offset + limit - 1);
 
         if (filters.status) {
-            query = query.eq('order_status', filters.status);
+            const grouped: Record<string, string[]> = {
+                preparing: ['preparing', 'ready_for_pickup'],
+                processing: ['preparing', 'ready_for_pickup'],
+                on_the_way: ['on_the_way', 'picked_up'],
+                cancelled: ['cancelled', 'canceled'],
+                canceled: ['cancelled', 'canceled'],
+            };
+            const values = grouped[filters.status] || [filters.status];
+            query = values.length === 1 ? query.eq('status', values[0]) : query.in('status', values);
         }
         if (filters.payment_status) {
             query = query.eq('payment_status', filters.payment_status);
@@ -41,14 +49,55 @@ export class AdminOrdersService {
             return { success: false, message: error.message, data: null };
         }
 
+        const rows = (data || []).map((row: Record<string, unknown>) => ({
+            ...row,
+            order_status: row.order_status || row.status,
+            total_amount: row.total_amount ?? row.total_price,
+        }));
+
         return {
             success: true,
-            data,
+            data: rows,
             pagination: {
                 page,
                 limit,
                 total: count || 0,
                 totalPages: Math.ceil((count || 0) / limit),
+            },
+        };
+    }
+
+    async getCounts() {
+        const { data, error, count } = await supabase
+            .from('orders')
+            .select('status, payment_status, payment_method', { count: 'exact' })
+            .range(0, 9999);
+
+        if (error) {
+            return { success: false, message: error.message, data: null };
+        }
+
+        const byStatus: Record<string, number> = {};
+        const bump = (key: string) => {
+            byStatus[key] = (byStatus[key] || 0) + 1;
+        };
+
+        for (const row of data || []) {
+            const raw = String(row.status || 'pending').toLowerCase();
+            bump(raw);
+            const pay = String(row.payment_status || '').toLowerCase();
+            const method = String(row.payment_method || '').toLowerCase();
+            if (pay === 'failed') bump('failed');
+            if (pay === 'offline' || pay === 'cash' || method === 'cash') bump('offline');
+            if (pay === 'refund_requested') bump('refund_requested');
+            if (pay === 'refunded') bump('refunded');
+        }
+
+        return {
+            success: true,
+            data: {
+                total: count || (data || []).length,
+                byStatus,
             },
         };
     }
@@ -93,7 +142,7 @@ export class AdminOrdersService {
     async cancelOrder(id: string) {
         const { data, error } = await supabase
             .from('orders')
-            .update({ order_status: 'cancelled' })
+            .update({ status: 'cancelled' })
             .eq('id', id)
             .select()
             .single();

@@ -52,20 +52,56 @@ function startOfYearIso() {
     return new Date(Date.UTC(now.getUTCFullYear(), 0, 1)).toISOString();
 }
 
+const UUID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isUuid(id: string) {
+    return UUID_RE.test(id);
+}
+
 export class AdminUsersService {
+    /** User IDs that own a courier or merchant profile (not pure customers). */
+    private async getProUserIds(): Promise<string[]> {
+        const [couriers, merchants] = await Promise.all([
+            supabase.from('couriers').select('user_id'),
+            supabase.from('merchants').select('user_id'),
+        ]);
+        const ids = new Set<string>();
+        for (const row of couriers.data || []) {
+            if (row.user_id) ids.add(row.user_id as string);
+        }
+        for (const row of merchants.data || []) {
+            if (row.user_id) ids.add(row.user_id as string);
+        }
+        return [...ids];
+    }
+
+    /** Non-admin users who are not courier/merchant owners. */
+    private applyCustomerFilters(query: any, proUserIds: string[]) {
+        let q = query.eq('is_admin', false);
+        if (proUserIds.length > 0) {
+            q = q.not('id', 'in', `(${proUserIds.join(',')})`);
+        }
+        return q;
+    }
+
     async listCustomers(filters: ListFilters) {
         const page = filters.page || 1;
         const limit = filters.limit || 20;
         const offset = (page - 1) * limit;
+        const proUserIds = await this.getProUserIds();
 
-        let query = supabase
-            .from('users')
-            .select('*', { count: 'exact' })
+        let query = this.applyCustomerFilters(
+            supabase.from('users').select('*', { count: 'exact' }),
+            proUserIds,
+        )
             .order('created_at', { ascending: false })
             .range(offset, offset + limit - 1);
 
         if (filters.search) {
-            query = query.or(`first_name.ilike.%${filters.search}%,last_name.ilike.%${filters.search}%,phone.ilike.%${filters.search}%,email.ilike.%${filters.search}%`);
+            query = query.or(
+                `first_name.ilike.%${filters.search}%,last_name.ilike.%${filters.search}%,phone.ilike.%${filters.search}%,email.ilike.%${filters.search}%`,
+            );
         }
 
         const { data, error, count } = await query;
@@ -79,10 +115,15 @@ export class AdminUsersService {
     }
 
     async getCustomer(id: string) {
+        if (!isUuid(id)) {
+            return { success: false, message: 'Invalid customer id', data: null };
+        }
+
         const { data, error } = await supabase
             .from('users')
             .select('*')
             .eq('id', id)
+            .eq('is_admin', false)
             .single();
 
         if (error) return { success: false, message: error.message, data: null };
@@ -173,6 +214,10 @@ export class AdminUsersService {
     }
 
     async getCourier(id: string) {
+        if (!isUuid(id)) {
+            return { success: false, message: 'Invalid courier id', data: null };
+        }
+
         const { data, error } = await supabase
             .from('couriers')
             .select(`
@@ -230,155 +275,113 @@ export class AdminUsersService {
     async getUsersOverview() {
         const monthStart = startOfMonthIso();
         const yearStart = startOfYearIso();
+        const proUserIds = await this.getProUserIds();
 
+        // Wave 1: core head-counts only (fast). Never fail the whole overview unless all four fail.
         const [
             customersTotal,
             customersNewMonth,
-            customersCreated,
             couriersTotal,
             couriersOnline,
             couriersNewMonth,
-            couriersCreated,
-            couriersSample,
             merchantsTotal,
             merchantsActive,
             merchantsPending,
             merchantsDenied,
             merchantsNewMonth,
-            merchantsCreated,
-            merchantsSample,
             employeesTotal,
             employeesNewMonth,
-            orderCourierRows,
-            orderMerchantRows,
         ] = await Promise.all([
-            supabase.from('users').select('*', { count: 'exact', head: true }),
-            supabase.from('users').select('*', { count: 'exact', head: true }).gte('created_at', monthStart),
-            supabase.from('users').select('created_at').gte('created_at', yearStart).limit(5000),
+            this.applyCustomerFilters(
+                supabase.from('users').select('*', { count: 'exact', head: true }),
+                proUserIds,
+            ),
+            this.applyCustomerFilters(
+                supabase.from('users').select('*', { count: 'exact', head: true }),
+                proUserIds,
+            ).gte('created_at', monthStart),
             supabase.from('couriers').select('*', { count: 'exact', head: true }),
             supabase.from('couriers').select('*', { count: 'exact', head: true }).eq('is_online', true),
             supabase.from('couriers').select('*', { count: 'exact', head: true }).gte('created_at', monthStart),
-            supabase.from('couriers').select('created_at').gte('created_at', yearStart).limit(2000),
-            supabase
-                .from('couriers')
-                .select(`
-                    id, name, is_online, created_at,
-                    user:users!couriers_user_id_fkey(phone)
-                `)
-                .order('created_at', { ascending: false })
-                .limit(50),
             supabase.from('merchants').select('*', { count: 'exact', head: true }),
-            supabase.from('merchants').select('*', { count: 'exact', head: true }).in('status', ['active', 'approved', 'open']),
-            supabase.from('merchants').select('*', { count: 'exact', head: true }).in('status', ['pending', 'requested']),
-            supabase.from('merchants').select('*', { count: 'exact', head: true }).in('status', ['denied', 'rejected', 'inactive']),
-            supabase.from('merchants').select('*', { count: 'exact', head: true }).gte('created_at', monthStart),
-            supabase.from('merchants').select('created_at').gte('created_at', yearStart).limit(2000),
             supabase
                 .from('merchants')
-                .select('id, name, type, status, created_at')
-                .order('created_at', { ascending: false })
-                .limit(50),
-            supabase.from('users').select('*', { count: 'exact', head: true }).eq('role', 'admin'),
+                .select('*', { count: 'exact', head: true })
+                .in('status', ['active', 'approved', 'open']),
+            supabase
+                .from('merchants')
+                .select('*', { count: 'exact', head: true })
+                .in('status', ['pending', 'requested']),
+            supabase
+                .from('merchants')
+                .select('*', { count: 'exact', head: true })
+                .in('status', ['denied', 'rejected', 'inactive']),
+            supabase.from('merchants').select('*', { count: 'exact', head: true }).gte('created_at', monthStart),
+            supabase.from('users').select('*', { count: 'exact', head: true }).eq('is_admin', true),
             supabase
                 .from('users')
                 .select('*', { count: 'exact', head: true })
-                .eq('role', 'admin')
+                .eq('is_admin', true)
                 .gte('created_at', monthStart),
-            supabase
-                .from('orders')
-                .select('courier_id')
-                .not('courier_id', 'is', null)
-                .order('created_at', { ascending: false })
-                .limit(800),
-            supabase
-                .from('orders')
-                .select('merchant_id')
-                .not('merchant_id', 'is', null)
-                .order('created_at', { ascending: false })
-                .limit(800),
         ]);
 
-        const courierOrderMap: Record<string, number> = {};
-        for (const row of orderCourierRows.data || []) {
-            const id = row.courier_id as string | null;
-            if (!id) continue;
-            courierOrderMap[id] = (courierOrderMap[id] || 0) + 1;
+        const coreFailed =
+            customersTotal.error && couriersTotal.error && merchantsTotal.error && employeesTotal.error;
+        if (coreFailed) {
+            return {
+                success: false,
+                message: customersTotal.error?.message || 'Could not load user overview',
+                data: null,
+            };
         }
 
-        const merchantOrderMap: Record<string, number> = {};
-        for (const row of orderMerchantRows.data || []) {
-            const id = row.merchant_id as string | null;
-            if (!id) continue;
-            merchantOrderMap[id] = (merchantOrderMap[id] || 0) + 1;
-        }
+        // Wave 2: optional growth + recent samples (best-effort; ignore errors).
+        const [customersCreated, couriersCreated, merchantsCreated, couriersSample, merchantsSample] =
+            await Promise.all([
+                this.applyCustomerFilters(
+                    supabase.from('users').select('created_at'),
+                    proUserIds,
+                )
+                    .gte('created_at', yearStart)
+                    .limit(2000),
+                supabase
+                    .from('couriers')
+                    .select('created_at')
+                    .gte('created_at', yearStart)
+                    .limit(1000),
+                supabase
+                    .from('merchants')
+                    .select('created_at')
+                    .gte('created_at', yearStart)
+                    .limit(1000),
+                supabase
+                    .from('couriers')
+                    .select('id, name, is_online, created_at')
+                    .order('created_at', { ascending: false })
+                    .limit(8),
+                supabase
+                    .from('merchants')
+                    .select('id, name, type, status, created_at')
+                    .order('created_at', { ascending: false })
+                    .limit(8),
+            ]);
 
-        const courierById = new Map(
-            (couriersSample.data || []).map((c: any) => [c.id as string, c]),
-        );
-        const merchantById = new Map(
-            (merchantsSample.data || []).map((m: any) => [m.id as string, m]),
-        );
+        // Recent samples stand in for "top" boards (avoids heavy order scans that time out on cold hosts).
+        const topCouriers = (couriersSample.data || []).slice(0, 5).map((c: any) => ({
+            id: c.id as string,
+            name: c.name || 'Courier',
+            phone: '',
+            orders: 0,
+            is_online: Boolean(c.is_online),
+        }));
 
-        const topCourierIds = Object.entries(courierOrderMap)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 5)
-            .map(([id]) => id);
-
-        // Ensure we have profile data for top IDs not in the recent sample.
-        const missingCourierIds = topCourierIds.filter((id) => !courierById.has(id));
-        if (missingCourierIds.length) {
-            const { data } = await supabase
-                .from('couriers')
-                .select(`
-                    id, name, is_online, created_at,
-                    user:users!couriers_user_id_fkey(phone)
-                `)
-                .in('id', missingCourierIds);
-            for (const c of data || []) courierById.set(c.id, c);
-        }
-
-        const topMerchantIds = Object.entries(merchantOrderMap)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 5)
-            .map(([id]) => id);
-
-        const missingMerchantIds = topMerchantIds.filter((id) => !merchantById.has(id));
-        if (missingMerchantIds.length) {
-            const { data } = await supabase
-                .from('merchants')
-                .select('id, name, type, status, created_at')
-                .in('id', missingMerchantIds);
-            for (const m of data || []) merchantById.set(m.id, m);
-        }
-
-        const topCouriers = topCourierIds
-            .map((id) => {
-                const c = courierById.get(id);
-                if (!c) return null;
-                const phone = (c.user as { phone?: string } | null)?.phone || '';
-                return {
-                    id,
-                    name: c.name || 'Courier',
-                    phone,
-                    orders: courierOrderMap[id] || 0,
-                    is_online: Boolean(c.is_online),
-                };
-            })
-            .filter(Boolean);
-
-        const topMerchants = topMerchantIds
-            .map((id) => {
-                const m = merchantById.get(id);
-                if (!m) return null;
-                return {
-                    id,
-                    name: m.name || 'Merchant',
-                    type: m.type || '',
-                    status: m.status || '',
-                    orders: merchantOrderMap[id] || 0,
-                };
-            })
-            .filter(Boolean);
+        const topMerchants = (merchantsSample.data || []).slice(0, 5).map((m: any) => ({
+            id: m.id as string,
+            name: m.name || 'Merchant',
+            type: m.type || '',
+            status: m.status || '',
+            orders: 0,
+        }));
 
         const customers = customersTotal.count || 0;
         const couriers = couriersTotal.count || 0;
@@ -484,7 +487,7 @@ export class AdminUsersService {
                 'id, email, first_name, last_name, phone, is_admin, is_super_admin, role, created_at',
                 { count: 'exact' }
             )
-            .eq('role', 'admin')
+            .eq('is_admin', true)
             .order('created_at', { ascending: false })
             .range(offset, offset + limit - 1);
 

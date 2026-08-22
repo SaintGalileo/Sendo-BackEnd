@@ -52,8 +52,9 @@ const deliveryCtrl = new AdminDeliveryController();
 const parcelCtrl = new AdminParcelController();
 const rentalCtrl = new AdminRentalController();
 
-// All admin routes require authentication + admin role
-router.use(authMiddleware, roleMiddleware(['admin']));
+// All admin routes require authentication + admin (or super_admin) role.
+// Super-admins often carry primary role `super_admin` with `roles: ['admin','super_admin']`.
+router.use(authMiddleware, roleMiddleware(['admin', 'super_admin']));
 
 const requireSuperAdmin = roleMiddleware(['super_admin']);
 
@@ -64,6 +65,7 @@ router.get('/health', (_req, res) => res.json({ success: true, message: 'Admin A
 router.get('/dashboard', dashboardCtrl.getOverview);
 
 // ── Orders ──
+router.get('/orders/counts', ordersCtrl.getCounts);
 router.get('/orders', ordersCtrl.listOrders);
 router.get('/orders/:id', ordersCtrl.getOrder);
 router.post('/orders/:id/cancel', ordersCtrl.cancelOrder);
@@ -76,8 +78,8 @@ router.get('/couriers', usersCtrl.listCouriers);
 router.get('/couriers/:id', usersCtrl.getCourier);
 router.get('/merchants', usersCtrl.listMerchants);
 
-// ── Employees (super-admin only) ──
-router.get('/employees', requireSuperAdmin, (req, res) => usersCtrl.listEmployees(req, res));
+// ── Employees: any admin can list; mutations stay super-admin only ──
+router.get('/employees', (req, res) => usersCtrl.listEmployees(req, res));
 router.post('/employees', requireSuperAdmin, (req, res) => usersCtrl.createEmployee(req, res));
 router.put('/employees/:id', requireSuperAdmin, (req, res) => usersCtrl.updateEmployee(req, res));
 router.put('/employees/:id/status', requireSuperAdmin, (req, res) => usersCtrl.updateEmployeeStatus(req as any, res));
