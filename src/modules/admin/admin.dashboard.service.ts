@@ -73,7 +73,7 @@ export class AdminDashboardService {
                 .limit(800),
             supabase
                 .from('orders')
-                .select('total_amount, created_at')
+                .select('total_amount, total_price, created_at')
                 .eq('status', 'delivered')
                 .order('created_at', { ascending: false })
                 .limit(365),
@@ -126,7 +126,11 @@ export class AdminDashboardService {
         for (const row of salesSeriesResult.data || []) {
             const day = row.created_at?.slice(0, 10);
             if (!day) continue;
-            dayMap[day] = (dayMap[day] || 0) + (Number(row.total_amount ?? row.total_price) || 0);
+            const amount = Number(
+                (row as { total_amount?: number | string; total_price?: number | string }).total_amount ??
+                    (row as { total_price?: number | string }).total_price,
+            );
+            dayMap[day] = (dayMap[day] || 0) + (amount || 0);
         }
         const salesSeries = Object.entries(dayMap)
             .sort(([a], [b]) => a.localeCompare(b))
