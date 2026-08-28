@@ -26,6 +26,12 @@ export class AdminItemsController {
         return res.status(result.success ? 201 : 400).json(result);
     }
 
+    async bulkCreateItems(req: Request, res: Response) {
+        const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+        const result = await service.bulkCreateItems(rows);
+        return res.status(result.success ? 200 : 400).json(result);
+    }
+
     async updateItem(req: Request, res: Response) {
         const result = await service.updateItem(req.params.id as string, req.body);
         return res.status(result.success ? 200 : 400).json(result);

@@ -75,6 +75,7 @@ router.get('/users/overview', (req, res) => usersCtrl.getUsersOverview(req, res)
 router.get('/customers', usersCtrl.listCustomers);
 router.get('/customers/:id', usersCtrl.getCustomer);
 router.get('/couriers', usersCtrl.listCouriers);
+router.post('/couriers', usersCtrl.createCourier);
 router.get('/couriers/:id', usersCtrl.getCourier);
 router.get('/merchants', usersCtrl.listMerchants);
 
@@ -86,6 +87,8 @@ router.put('/employees/:id/status', requireSuperAdmin, (req, res) => usersCtrl.u
 
 // ── Stores ──
 router.get('/stores', storesCtrl.listStores);
+router.post('/stores', storesCtrl.createStore);
+router.post('/stores/bulk-import', storesCtrl.bulkCreateStores);
 router.get('/stores/:id', storesCtrl.getStore);
 router.put('/stores/:id/status', storesCtrl.updateStoreStatus);
 
@@ -104,6 +107,7 @@ router.get('/transactions/courier/withdrawals', transactionsCtrl.getCourierWithd
 router.get('/transactions/store-disbursements', transactionsCtrl.getStoreDisbursements);
 router.get('/transactions/courier-disbursements', transactionsCtrl.getCourierDisbursements);
 router.get('/transactions/courier/earnings', transactionsCtrl.getCourierEarnings);
+router.post('/transactions/courier/earnings', transactionsCtrl.createCourierEarning);
 router.get('/transactions/reports/day-wise', transactionsCtrl.getDayWiseReport);
 router.get('/transactions/reports/item-wise', transactionsCtrl.getItemWiseReport);
 router.get('/transactions/reports/store-wise', transactionsCtrl.getStoreWiseReport);
@@ -129,6 +133,7 @@ router.delete('/coupons/:id', couponsCtrl.deleteCoupon);
 // ── Items ──
 router.get('/items', itemsCtrl.listItems);
 router.post('/items', itemsCtrl.createItem);
+router.post('/items/bulk-import', itemsCtrl.bulkCreateItems);
 router.get('/items/:id', itemsCtrl.getItem);
 router.put('/items/:id', itemsCtrl.updateItem);
 router.delete('/items/:id', itemsCtrl.deleteItem);
@@ -205,6 +210,14 @@ router.post('/settings/tax', requireSuperAdmin, settingsCtrl.createTax);
 router.put('/settings/tax/:id', requireSuperAdmin, settingsCtrl.updateTaxSettings);
 router.get('/settings/payment-methods', settingsCtrl.getPaymentMethods);
 router.put('/settings/payment-methods', requireSuperAdmin, settingsCtrl.updatePaymentMethods);
+router.get('/settings/withdraw-methods', settingsCtrl.getWithdrawMethods);
+router.post('/settings/withdraw-methods', settingsCtrl.createWithdrawMethod);
+router.put('/settings/withdraw-methods/:id', settingsCtrl.updateWithdrawMethod);
+router.delete('/settings/withdraw-methods/:id', settingsCtrl.deleteWithdrawMethod);
+router.get('/settings/custom-roles', settingsCtrl.getCustomRoles);
+router.post('/settings/custom-roles', settingsCtrl.createCustomRole);
+router.put('/settings/custom-roles/:id', settingsCtrl.updateCustomRole);
+router.delete('/settings/custom-roles/:id', settingsCtrl.deleteCustomRole);
 router.get('/settings/analytic', settingsCtrl.getAnalyticSettings);
 router.put('/settings/analytic', requireSuperAdmin, settingsCtrl.updateAnalyticSettings);
 router.get('/settings/websocket', settingsCtrl.getWebsocketSettings);
@@ -250,5 +263,10 @@ router.get('/parcel/dashboard', parcelCtrl.getDashboard);
 
 // ── Rental ──
 router.get('/rental/dashboard', rentalCtrl.getDashboard);
+router.get('/rental/providers', rentalCtrl.listProviders);
+router.post('/rental/providers', rentalCtrl.createProvider);
+router.post('/rental/providers/bulk-import', rentalCtrl.bulkCreateProviders);
+router.get('/rental/vehicles', rentalCtrl.listVehicles);
+router.post('/rental/vehicles', rentalCtrl.createVehicle);
 
 export default router;

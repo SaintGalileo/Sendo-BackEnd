@@ -18,6 +18,7 @@ router.post('/register-merchant', authController.registerMerchant);
 // Admin login (email + password)
 // Note: keep this route path stable because Sendo-v2 proxies it at /api/auth/admin/login.
 router.post('/admin/login', authController.adminLogin);
+router.post('/register/admin', authController.registerAdmin);
 router.get('/admin/me', authMiddleware, authController.adminMe);
 router.put('/admin/me', authMiddleware, authController.updateAdminProfile);
 router.put('/admin/password', authMiddleware, authController.changeAdminPassword);

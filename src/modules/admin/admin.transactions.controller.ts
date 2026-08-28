@@ -98,6 +98,11 @@ export class AdminTransactionsController {
         return res.status(result.success ? 200 : 500).json(result);
     }
 
+    async createCourierEarning(req: Request, res: Response) {
+        const result = await service.createCourierEarning(req.body || {});
+        return res.status(result.success ? 201 : 400).json(result);
+    }
+
     async getDayWiseReport(req: Request, res: Response) {
         const { from, to } = dateRangeFromQuery(req.query);
         const result = await service.getDayWiseReport(from, to);

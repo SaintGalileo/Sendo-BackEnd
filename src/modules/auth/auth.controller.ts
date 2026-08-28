@@ -169,6 +169,17 @@ export class AuthController {
         return res.status(result.success ? 200 : 400).json(result);
     }
 
+    async registerAdmin(req: Request, res: Response) {
+        const { firstName, first_name, lastName, last_name, email, password } = req.body || {};
+        const result = await authService.registerAdmin(
+            firstName || first_name,
+            lastName || last_name,
+            email,
+            password,
+        );
+        return res.status(result.success ? 201 : 400).json(result);
+    }
+
     async sendEmailOTP(req: Request, res: Response) {
         const { email } = req.body || {};
 

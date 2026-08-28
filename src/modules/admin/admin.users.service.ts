@@ -683,4 +683,92 @@ export class AdminUsersService {
             data: this.mapEmployee(data),
         };
     }
+
+    async createCourier(input: {
+        first_name?: string;
+        last_name?: string;
+        email?: string;
+        phone?: string;
+        vehicle_type?: string;
+        plate_number?: string;
+    }) {
+        const firstName = (input.first_name || '').trim();
+        const lastName = (input.last_name || '').trim();
+        if (!firstName) return { success: false, message: 'First name is required', data: null };
+
+        const phone = (input.phone || '').trim() || null;
+        const email = (input.email || '').trim().toLowerCase() || null;
+        if (!phone && !email) {
+            return { success: false, message: 'Phone or email is required', data: null };
+        }
+
+        let userId: string | null = null;
+        if (phone) {
+            const { data: byPhone } = await supabase.from('users').select('id').eq('phone', phone).maybeSingle();
+            if (byPhone) userId = byPhone.id as string;
+        }
+        if (!userId && email) {
+            const { data: byEmail } = await supabase.from('users').select('id').eq('email', email).maybeSingle();
+            if (byEmail) userId = byEmail.id as string;
+        }
+
+        if (userId) {
+            const { data: existingCourier } = await supabase
+                .from('couriers')
+                .select('id')
+                .eq('user_id', userId)
+                .maybeSingle();
+            if (existingCourier) {
+                return { success: false, message: 'This user already has a courier profile', data: null };
+            }
+            await supabase
+                .from('users')
+                .update({
+                    first_name: firstName,
+                    last_name: lastName || null,
+                    email: email ?? undefined,
+                    role: 'courier',
+                })
+                .eq('id', userId);
+        } else {
+            const { data: newUser, error: userError } = await supabase
+                .from('users')
+                .insert([
+                    {
+                        phone,
+                        email,
+                        first_name: firstName,
+                        last_name: lastName || null,
+                        role: 'courier',
+                    },
+                ])
+                .select('id')
+                .single();
+            if (userError || !newUser) {
+                return { success: false, message: userError?.message || 'Failed to create courier user', data: null };
+            }
+            userId = newUser.id as string;
+        }
+
+        const courierName = `${firstName} ${lastName}`.trim();
+        const { data, error } = await supabase
+            .from('couriers')
+            .insert([
+                {
+                    user_id: userId,
+                    name: courierName,
+                    vehicle_type: (input.vehicle_type || 'bike').trim(),
+                    plate_number: (input.plate_number || '').trim() || null,
+                    is_online: false,
+                },
+            ])
+            .select(`
+                *,
+                user:users!couriers_user_id_fkey(id, first_name, last_name, phone, email)
+            `)
+            .single();
+
+        if (error) return { success: false, message: error.message, data: null };
+        return { success: true, message: 'Courier created', data: this.normalizeCourierLocation(data) };
+    }
 }

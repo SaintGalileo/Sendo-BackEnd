@@ -1,6 +1,43 @@
 import { supabase } from '../../config/supabase';
 
+type RentalProvider = {
+    id: string;
+    name: string;
+    company?: string;
+    email?: string;
+    phone?: string;
+    status?: string;
+    created_at: string;
+};
+
+type RentalVehicle = {
+    id: string;
+    provider_id?: string;
+    name: string;
+    category?: string;
+    registration_no?: string;
+    status?: string;
+    created_at: string;
+};
+
 export class AdminRentalService {
+    private newId() {
+        return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    }
+
+    private async getKvList(key: string): Promise<Record<string, unknown>[]> {
+        const { data } = await supabase.from('admin_settings').select('value').eq('key', key).maybeSingle();
+        return Array.isArray(data?.value) ? (data.value as Record<string, unknown>[]) : [];
+    }
+
+    private async putKvList(key: string, value: Record<string, unknown>[]) {
+        const { error } = await supabase
+            .from('admin_settings')
+            .upsert([{ key, value, updated_at: new Date().toISOString() }], { onConflict: 'key' });
+        if (error) return { success: false as const, message: error.message };
+        return { success: true as const, message: 'Saved' };
+    }
+
     async getDashboard() {
         try {
             const [ordersResult, salesResult] = await Promise.all([
@@ -44,7 +81,6 @@ export class AdminRentalService {
             const perDay = all.filter((o) =>
                 tripTypeOf(o).includes('day') || tripTypeOf(o).includes('daily'),
             ).length;
-            // If trip_type missing, distribute residual into "other" buckets as 0 and keep totals honest.
             const typed = hourly + distance + perDay;
             const remainder = Math.max(0, all.length - typed);
 
@@ -103,5 +139,73 @@ export class AdminRentalService {
                 },
             };
         }
+    }
+
+    async listProviders() {
+        const list = await this.getKvList('rental_providers');
+        return { success: true, data: list };
+    }
+
+    async createProvider(body: Record<string, unknown>) {
+        const name = String(body.name || '').trim();
+        if (!name) return { success: false, message: 'Provider name is required', data: null };
+
+        const list = await this.getKvList('rental_providers');
+        const created: RentalProvider = {
+            id: this.newId(),
+            name,
+            company: String(body.company || '').trim() || undefined,
+            email: String(body.email || '').trim() || undefined,
+            phone: String(body.phone || '').trim() || undefined,
+            status: String(body.status || 'active'),
+            created_at: new Date().toISOString(),
+        };
+        list.unshift(created);
+        const put = await this.putKvList('rental_providers', list);
+        if (!put.success) return { success: false, message: put.message, data: null };
+        return { success: true, message: 'Rental provider created', data: created };
+    }
+
+    async listVehicles() {
+        const list = await this.getKvList('rental_vehicles');
+        return { success: true, data: list };
+    }
+
+    async createVehicle(body: Record<string, unknown>) {
+        const name = String(body.name || '').trim();
+        if (!name) return { success: false, message: 'Vehicle name is required', data: null };
+
+        const list = await this.getKvList('rental_vehicles');
+        const created: RentalVehicle = {
+            id: this.newId(),
+            provider_id: String(body.provider_id || '').trim() || undefined,
+            name,
+            category: String(body.category || '').trim() || undefined,
+            registration_no: String(body.registration_no || '').trim() || undefined,
+            status: String(body.status || 'active'),
+            created_at: new Date().toISOString(),
+        };
+        list.unshift(created);
+        const put = await this.putKvList('rental_vehicles', list);
+        if (!put.success) return { success: false, message: put.message, data: null };
+        return { success: true, message: 'Rental vehicle created', data: created };
+    }
+
+    async bulkCreateProviders(rows: Record<string, unknown>[]) {
+        if (!Array.isArray(rows) || rows.length === 0) {
+            return { success: false, message: 'rows array is required', data: null };
+        }
+        const errors: Array<{ row: number; message: string }> = [];
+        let succeeded = 0;
+        for (let i = 0; i < rows.length; i++) {
+            const result = await this.createProvider(rows[i]);
+            if (result.success) succeeded += 1;
+            else errors.push({ row: i + 1, message: result.message || 'Failed' });
+        }
+        return {
+            success: true,
+            message: `Imported ${succeeded} of ${rows.length} providers`,
+            data: { total: rows.length, succeeded, failed: rows.length - succeeded, errors },
+        };
     }
 }

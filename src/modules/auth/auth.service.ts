@@ -395,6 +395,7 @@ export class AuthService {
                 last_name: lastName,
                 name: storeName,
                 type: merchantType,
+                status: 'pending',
                 description,
                 phone: contactPhone || decoded.phone,
                 contact_email: contactEmail || email,
@@ -695,6 +696,95 @@ export class AuthService {
         }
 
         return { success: true, message: 'Password updated' };
+    }
+
+    async registerAdmin(
+        firstName: string,
+        lastName: string,
+        email: string,
+        password: string,
+    ): Promise<{ success: boolean; message: string; data?: unknown }> {
+        const normalizedEmail = (email || '').trim().toLowerCase();
+        if (!normalizedEmail) return { success: false, message: 'Email is required' };
+        if (!firstName?.trim() || !lastName?.trim()) {
+            return { success: false, message: 'First name and last name are required' };
+        }
+        if (!password || password.length < 8) {
+            return { success: false, message: 'Password must be at least 8 characters' };
+        }
+
+        const { count: adminCount, error: countError } = await supabase
+            .from('users')
+            .select('id', { count: 'exact', head: true })
+            .eq('is_admin', true);
+
+        if (countError) return { success: false, message: countError.message };
+
+        const isBootstrap = (adminCount || 0) === 0;
+        const allowOpenRegistration = process.env.ALLOW_ADMIN_REGISTRATION === 'true';
+        if (!isBootstrap && !allowOpenRegistration) {
+            return {
+                success: false,
+                message: 'Admin registration is disabled. Contact a super-admin to create your account.',
+            };
+        }
+
+        const { data: existing } = await supabase
+            .from('users')
+            .select('id, is_admin, email')
+            .eq('email', normalizedEmail)
+            .maybeSingle();
+
+        if (existing?.is_admin) {
+            return { success: false, message: 'An admin with this email already exists' };
+        }
+
+        const password_hash = await AuthService.hashPassword(password);
+        const first_name = firstName.trim();
+        const last_name = lastName.trim();
+
+        if (existing) {
+            const { data, error } = await supabase
+                .from('users')
+                .update({
+                    is_admin: true,
+                    is_super_admin: isBootstrap,
+                    role: 'admin',
+                    password_hash,
+                    first_name,
+                    last_name,
+                })
+                .eq('id', existing.id)
+                .select('id, email, first_name, last_name, is_admin, is_super_admin, created_at')
+                .single();
+            if (error) return { success: false, message: error.message };
+            return {
+                success: true,
+                message: isBootstrap ? 'Super-admin account created' : 'Admin account created',
+                data,
+            };
+        }
+
+        const { data, error } = await supabase
+            .from('users')
+            .insert({
+                email: normalizedEmail,
+                first_name,
+                last_name,
+                role: 'admin',
+                is_admin: true,
+                is_super_admin: isBootstrap,
+                password_hash,
+            })
+            .select('id, email, first_name, last_name, is_admin, is_super_admin, created_at')
+            .single();
+
+        if (error) return { success: false, message: error.message };
+        return {
+            success: true,
+            message: isBootstrap ? 'Super-admin account created' : 'Admin account created',
+            data,
+        };
     }
 
     static async hashPassword(password: string): Promise<string> {

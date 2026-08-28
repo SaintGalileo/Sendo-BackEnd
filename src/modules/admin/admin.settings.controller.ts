@@ -177,4 +177,44 @@ export class AdminSettingsController {
         const result = await service.updateCmsPage(pageKey, req.body ?? {});
         return res.status(result.success ? 200 : 400).json(result);
     }
+
+    async getWithdrawMethods(_req: Request, res: Response) {
+        const result = await service.getWithdrawMethods();
+        return res.status(200).json(result);
+    }
+
+    async createWithdrawMethod(req: Request, res: Response) {
+        const result = await service.createWithdrawMethod(req.body ?? {});
+        return res.status(result.success ? 201 : 400).json(result);
+    }
+
+    async updateWithdrawMethod(req: Request, res: Response) {
+        const result = await service.updateWithdrawMethod(req.params.id as string, req.body ?? {});
+        return res.status(result.success ? 200 : 400).json(result);
+    }
+
+    async deleteWithdrawMethod(req: Request, res: Response) {
+        const result = await service.deleteWithdrawMethod(req.params.id as string);
+        return res.status(result.success ? 200 : 400).json(result);
+    }
+
+    async getCustomRoles(_req: Request, res: Response) {
+        const result = await service.getCustomRoles();
+        return res.status(200).json(result);
+    }
+
+    async createCustomRole(req: Request, res: Response) {
+        const result = await service.createCustomRole(req.body ?? {});
+        return res.status(result.success ? 201 : 400).json(result);
+    }
+
+    async updateCustomRole(req: Request, res: Response) {
+        const result = await service.updateCustomRole(req.params.id as string, req.body ?? {});
+        return res.status(result.success ? 200 : 400).json(result);
+    }
+
+    async deleteCustomRole(req: Request, res: Response) {
+        const result = await service.deleteCustomRole(req.params.id as string);
+        return res.status(result.success ? 200 : 400).json(result);
+    }
 }

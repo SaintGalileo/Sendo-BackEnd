@@ -38,6 +38,19 @@ export class AdminUsersController {
         return res.json(result);
     }
 
+    async createCourier(req: Request, res: Response) {
+        const body = req.body || {};
+        const result = await service.createCourier({
+            first_name: body.first_name,
+            last_name: body.last_name,
+            email: body.email,
+            phone: body.phone,
+            vehicle_type: body.vehicle_type,
+            plate_number: body.plate_number,
+        });
+        return res.status(result.success ? 201 : 400).json(result);
+    }
+
     async listMerchants(req: Request, res: Response) {
         const { search, page, limit } = req.query;
         const result = await service.listMerchants({

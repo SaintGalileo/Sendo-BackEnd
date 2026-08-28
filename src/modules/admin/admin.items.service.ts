@@ -98,4 +98,22 @@ export class AdminItemsService {
         if (error) return { success: false, message: error.message };
         return { success: true, message: 'Item deleted' };
     }
+
+    async bulkCreateItems(rows: Record<string, unknown>[]) {
+        if (!Array.isArray(rows) || rows.length === 0) {
+            return { success: false, message: 'rows array is required', data: null };
+        }
+        const errors: Array<{ row: number; message: string }> = [];
+        let succeeded = 0;
+        for (let i = 0; i < rows.length; i++) {
+            const result = await this.createItem(rows[i]);
+            if (result.success) succeeded += 1;
+            else errors.push({ row: i + 1, message: result.message || 'Failed to create item' });
+        }
+        return {
+            success: true,
+            message: `Imported ${succeeded} of ${rows.length} items`,
+            data: { total: rows.length, succeeded, failed: rows.length - succeeded, errors },
+        };
+    }
 }

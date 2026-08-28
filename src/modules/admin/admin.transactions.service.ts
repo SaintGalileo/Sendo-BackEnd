@@ -330,24 +330,95 @@ export class AdminTransactionsService {
     }
 
     async getCourierEarnings() {
-        const { data, error } = await supabase
-            .from('orders')
-            .select('courier_id, delivery_fee, order_status, created_at')
-            .eq('order_status', 'delivered');
+        const { data: earnings, error } = await supabase
+            .from('courier_earnings')
+            .select(`
+                *,
+                courier:couriers(
+                    id,
+                    name,
+                    user:users!couriers_user_id_fkey(first_name, last_name)
+                )
+            `)
+            .order('created_at', { ascending: false })
+            .limit(200);
 
-        if (error) return { success: false, message: error.message, data: null };
-
-        const earningsMap: Record<string, { courier_id: string; total_earnings: number; total_deliveries: number }> = {};
-        for (const order of data || []) {
-            if (!order.courier_id) continue;
-            if (!earningsMap[order.courier_id]) {
-                earningsMap[order.courier_id] = { courier_id: order.courier_id, total_earnings: 0, total_deliveries: 0 };
-            }
-            earningsMap[order.courier_id].total_earnings += Number(order.delivery_fee) || 0;
-            earningsMap[order.courier_id].total_deliveries += 1;
+        if (!error && earnings) {
+            const mapped = (earnings || []).map((row: Record<string, unknown>) => {
+                const courier = row.courier as Record<string, unknown> | undefined;
+                const user = courier?.user as Record<string, unknown> | undefined;
+                const courierName =
+                    String(courier?.name || '') ||
+                    `${user?.first_name || ''} ${user?.last_name || ''}`.trim() ||
+                    'Courier';
+                return {
+                    ...row,
+                    courier_name: courierName,
+                    method: row.method ?? row.payment_method ?? null,
+                    reference: row.reference ?? row.description ?? null,
+                };
+            });
+            return { success: true, data: mapped };
         }
 
-        return { success: true, data: Object.values(earningsMap) };
+        const txResult = await supabase
+            .from('transactions')
+            .select('*')
+            .or('source_type.eq.courier,type.eq.courier')
+            .order('created_at', { ascending: false })
+            .limit(200);
+
+        if (!txResult.error && txResult.data) {
+            return {
+                success: true,
+                data: txResult.data.map((row: Record<string, unknown>) => ({
+                    ...row,
+                    courier_name: row.source_name ?? row.collect_from ?? 'Courier',
+                    method: row.note ?? row.type,
+                    reference: row.reference ?? row.description,
+                })),
+            };
+        }
+
+        return { success: true, data: [] };
+    }
+
+    async createCourierEarning(body: Record<string, unknown>) {
+        const courierId = String(body.courier_id || body.courierId || '').trim();
+        const amount = num(body.amount);
+        if (!courierId) return { success: false, message: 'courier_id is required', data: null };
+        if (!amount && body.amount !== 0) return { success: false, message: 'amount is required', data: null };
+
+        const payload: Record<string, unknown> = {
+            courier_id: courierId,
+            amount,
+            method: body.method ?? null,
+            reference: body.reference ?? body.ref ?? null,
+            description: body.note ?? body.description ?? null,
+        };
+        for (const key of Object.keys(payload)) {
+            if (payload[key] === null || payload[key] === undefined) delete payload[key];
+        }
+
+        const { data, error } = await supabase
+            .from('courier_earnings')
+            .insert([payload])
+            .select('*')
+            .maybeSingle();
+
+        if (!error && data) {
+            return { success: true, message: 'Courier earning recorded', data };
+        }
+
+        return this.createAccountTransaction({
+            amount,
+            type: 'credit',
+            source_type: 'courier',
+            source_name: courierId,
+            reference: body.reference ?? body.ref,
+            note: body.method,
+            description: body.reference ?? body.ref,
+        });
     }
 
     async getDayWiseReport(dateFrom?: string, dateTo?: string) {

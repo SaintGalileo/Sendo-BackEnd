@@ -28,4 +28,29 @@ export class AdminStoresController {
         const result = await service.updateStoreStatus(req.params.id as string, status);
         return res.status(result.success ? 200 : 400).json(result);
     }
+
+    async createStore(req: Request, res: Response) {
+        const body = req.body || {};
+        const result = await service.createStore({
+            name: body.name,
+            type: body.type,
+            owner_name: body.owner_name,
+            first_name: body.first_name,
+            last_name: body.last_name,
+            status: body.status,
+            phone: body.phone,
+            email: body.email,
+            address: body.address,
+            city: body.city,
+            state: body.state,
+            description: body.description,
+        });
+        return res.status(result.success ? 201 : 400).json(result);
+    }
+
+    async bulkCreateStores(req: Request, res: Response) {
+        const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+        const result = await service.bulkCreateStores(rows);
+        return res.status(result.success ? 200 : 400).json(result);
+    }
 }

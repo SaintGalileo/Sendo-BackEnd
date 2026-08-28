@@ -390,4 +390,139 @@ export class AdminSettingsService {
         const key = `cms.${pageKey}`;
         return this.putKv(key, body ?? {});
     }
+
+    private newId() {
+        return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    }
+
+    /** Payout method templates (bank transfer, mobile money, etc.) */
+    async getWithdrawMethods() {
+        const result = await this.getKv<Record<string, unknown>[]>('withdraw_methods', []);
+        return { success: true, data: Array.isArray(result.data) ? result.data : [] };
+    }
+
+    async createWithdrawMethod(body: Record<string, unknown>) {
+        const name = String(body.name || '').trim();
+        if (!name) return { success: false, message: 'Method name is required', data: null };
+
+        const rawFields = body.fields;
+        let fields: Array<{ name: string; type: string }> = [];
+        if (Array.isArray(rawFields)) {
+            fields = rawFields.map((f) => ({
+                name: String((f as Record<string, unknown>).name || ''),
+                type: String((f as Record<string, unknown>).type || 'text'),
+            })).filter((f) => f.name);
+        } else if (typeof rawFields === 'string') {
+            fields = rawFields
+                .split('\n')
+                .map((line) => line.trim())
+                .filter(Boolean)
+                .map((line) => {
+                    const [fieldName, fieldType] = line.split(':');
+                    return { name: fieldName.trim(), type: (fieldType || 'text').trim() };
+                });
+        }
+
+        const existing = await this.getKv<Record<string, unknown>[]>('withdraw_methods', []);
+        const list = Array.isArray(existing.data) ? [...existing.data] : [];
+        const created = {
+            id: this.newId(),
+            name,
+            fields,
+            is_default: Boolean(body.is_default),
+            created_at: new Date().toISOString(),
+        };
+        list.push(created);
+        const put = await this.putKv('withdraw_methods', list);
+        if (!put.success) return { success: false, message: put.message, data: null };
+        return { success: true, message: 'Withdraw method created', data: created };
+    }
+
+    async updateWithdrawMethod(id: string, body: Record<string, unknown>) {
+        const existing = await this.getKv<Record<string, unknown>[]>('withdraw_methods', []);
+        const list = Array.isArray(existing.data) ? [...existing.data] : [];
+        const idx = list.findIndex((m) => String(m.id) === String(id));
+        if (idx < 0) return { success: false, message: 'Withdraw method not found', data: null };
+
+        if (typeof body.name === 'string' && body.name.trim()) list[idx].name = body.name.trim();
+        if (body.fields !== undefined) {
+            if (typeof body.fields === 'string') {
+                list[idx].fields = String(body.fields)
+                    .split('\n')
+                    .map((line) => line.trim())
+                    .filter(Boolean)
+                    .map((line) => {
+                        const [fieldName, fieldType] = line.split(':');
+                        return { name: fieldName.trim(), type: (fieldType || 'text').trim() };
+                    });
+            } else if (Array.isArray(body.fields)) {
+                list[idx].fields = body.fields;
+            }
+        }
+        if (body.is_default !== undefined) list[idx].is_default = Boolean(body.is_default);
+
+        const put = await this.putKv('withdraw_methods', list);
+        if (!put.success) return { success: false, message: put.message, data: null };
+        return { success: true, message: 'Withdraw method updated', data: list[idx] };
+    }
+
+    async deleteWithdrawMethod(id: string) {
+        const existing = await this.getKv<Record<string, unknown>[]>('withdraw_methods', []);
+        const list = Array.isArray(existing.data) ? existing.data.filter((m) => String(m.id) !== String(id)) : [];
+        const put = await this.putKv('withdraw_methods', list);
+        if (!put.success) return { success: false, message: put.message, data: null };
+        return { success: true, message: 'Withdraw method deleted', data: null };
+    }
+
+    /** Admin custom roles with permission keys */
+    async getCustomRoles() {
+        const result = await this.getKv<Record<string, unknown>[]>('admin_custom_roles', []);
+        return { success: true, data: Array.isArray(result.data) ? result.data : [] };
+    }
+
+    async createCustomRole(body: Record<string, unknown>) {
+        const name = String(body.name || '').trim();
+        if (!name) return { success: false, message: 'Role name is required', data: null };
+
+        const permissions = Array.isArray(body.permissions)
+            ? body.permissions.map((p) => String(p))
+            : [];
+
+        const existing = await this.getKv<Record<string, unknown>[]>('admin_custom_roles', []);
+        const list = Array.isArray(existing.data) ? [...existing.data] : [];
+        const created = {
+            id: this.newId(),
+            name,
+            permissions,
+            created_at: new Date().toISOString(),
+        };
+        list.push(created);
+        const put = await this.putKv('admin_custom_roles', list);
+        if (!put.success) return { success: false, message: put.message, data: null };
+        return { success: true, message: 'Custom role created', data: created };
+    }
+
+    async updateCustomRole(id: string, body: Record<string, unknown>) {
+        const existing = await this.getKv<Record<string, unknown>[]>('admin_custom_roles', []);
+        const list = Array.isArray(existing.data) ? [...existing.data] : [];
+        const idx = list.findIndex((r) => String(r.id) === String(id));
+        if (idx < 0) return { success: false, message: 'Role not found', data: null };
+
+        if (typeof body.name === 'string' && body.name.trim()) list[idx].name = body.name.trim();
+        if (Array.isArray(body.permissions)) {
+            list[idx].permissions = body.permissions.map((p) => String(p));
+        }
+
+        const put = await this.putKv('admin_custom_roles', list);
+        if (!put.success) return { success: false, message: put.message, data: null };
+        return { success: true, message: 'Custom role updated', data: list[idx] };
+    }
+
+    async deleteCustomRole(id: string) {
+        const existing = await this.getKv<Record<string, unknown>[]>('admin_custom_roles', []);
+        const list = Array.isArray(existing.data) ? existing.data.filter((r) => String(r.id) !== String(id)) : [];
+        const put = await this.putKv('admin_custom_roles', list);
+        if (!put.success) return { success: false, message: put.message, data: null };
+        return { success: true, message: 'Custom role deleted', data: null };
+    }
 }
