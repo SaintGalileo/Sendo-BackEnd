@@ -24,7 +24,17 @@ export class AdminOrdersService {
             .order('created_at', { ascending: false })
             .range(offset, offset + limit - 1);
 
-        if (filters.status) {
+        const paymentStatusValues = new Set([
+            'paid',
+            'failed',
+            'offline',
+            'cash',
+            'refund_requested',
+            'refunded',
+        ]);
+        if (filters.status && paymentStatusValues.has(filters.status) && !filters.payment_status) {
+            query = query.eq('payment_status', filters.status);
+        } else if (filters.status) {
             const grouped: Record<string, string[]> = {
                 preparing: ['preparing', 'ready_for_pickup'],
                 processing: ['preparing', 'ready_for_pickup'],

@@ -2,28 +2,30 @@ import { supabase } from '../../config/supabase';
 
 export class CouponsService {
     async getAvailableCoupons() {
-        // Fetch active generic platform coupons
+        const now = new Date().toISOString();
         const { data, error } = await supabase
             .from('coupons')
             .select('*')
-            .eq('is_active', true)
-            .gte('valid_until', new Date().toISOString());
+            .eq('is_active', true);
 
         if (error) throw new Error(error.message);
-        return data;
+        return (data || []).filter((row) => {
+            const until = row.expires_at || row.valid_until;
+            return !until || until >= now;
+        });
     }
 
     async applyCoupon(userId: string, code: string) {
-        // Find the coupon
+        const now = new Date().toISOString();
         const { data: coupon, error } = await supabase
             .from('coupons')
             .select('*')
             .eq('code', code.toUpperCase())
             .eq('is_active', true)
-            .gte('valid_until', new Date().toISOString())
             .single();
 
-        if (error || !coupon) throw new Error('Invalid or expired coupon');
+        const until = coupon?.expires_at || coupon?.valid_until;
+        if (error || !coupon || (until && until < now)) throw new Error('Invalid or expired coupon');
 
         // Check user usage limit
         const { count, error: usageError } = await supabase
