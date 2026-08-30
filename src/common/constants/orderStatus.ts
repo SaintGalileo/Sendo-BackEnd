@@ -1,3 +1,8 @@
+/**
+ * Values of Postgres enum `public.order_status` (column `orders.status`).
+ * Verified against live DB — do NOT invent labels like `out_for_delivery`
+ * or `searching_for_deliverymen` as query filters; use UI buckets instead.
+ */
 export enum OrderStatus {
     PENDING = 'pending',
     ACCEPTED = 'accepted',

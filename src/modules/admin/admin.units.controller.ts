@@ -13,13 +13,18 @@ export class AdminUnitsController {
         return res.status(result.success ? 200 : 500).json(result);
     }
 
+    async getUnit(req: Request, res: Response) {
+        const result = await service.getUnit(req.params.id as string);
+        return res.status(result.success ? 200 : 404).json(result);
+    }
+
     async createUnit(req: Request, res: Response) {
-        const result = await service.createUnit(req.body);
+        const result = await service.createUnit(req.body ?? {});
         return res.status(result.success ? 201 : 400).json(result);
     }
 
     async updateUnit(req: Request, res: Response) {
-        const result = await service.updateUnit(req.params.id as string, req.body);
+        const result = await service.updateUnit(req.params.id as string, req.body ?? {});
         return res.status(result.success ? 200 : 400).json(result);
     }
 

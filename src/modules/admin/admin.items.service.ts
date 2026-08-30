@@ -36,14 +36,17 @@ export class AdminItemsService {
         let query = supabase
             .from('products')
             .select(`
-                *,
-                merchant:merchants!products_merchant_id_fkey(id, name, type, logo_url, city, state)
+                id, merchant_id, category_id, name, description, price,
+                image_url, images, is_available, stock_quantity, track_stock,
+                created_at, updated_at,
+                merchant:merchants!products_merchant_id_fkey(id, name, type, logo_url, city, state),
+                category:categories!products_category_id_fkey(id, name)
             `, { count: 'exact' })
             .order('created_at', { ascending: false })
             .range(offset, offset + limit - 1);
 
         if (filters.store_id) {
-            query = query.eq('store_id', filters.store_id);
+            query = query.eq('merchant_id', filters.store_id);
         }
         if (merchantIds) {
             query = query.in('merchant_id', merchantIds);
@@ -75,8 +78,11 @@ export class AdminItemsService {
         const { data, error } = await supabase
             .from('products')
             .select(`
-                *,
-                merchant:merchants!products_merchant_id_fkey(id, name, type, logo_url)
+                id, merchant_id, category_id, name, description, price,
+                image_url, images, is_available, stock_quantity, track_stock,
+                created_at, updated_at,
+                merchant:merchants!products_merchant_id_fkey(id, name, type, logo_url, city, state),
+                category:categories!products_category_id_fkey(id, name)
             `)
             .eq('id', id)
             .single();
@@ -90,9 +96,34 @@ export class AdminItemsService {
     }
 
     async createItem(itemData: Record<string, any>) {
+        const name = String(itemData?.name || '').trim();
+        if (!name) return { success: false, message: 'Name is required' };
+
+        const merchantId = itemData.merchant_id || itemData.store_id;
+        if (!merchantId) return { success: false, message: 'Store is required' };
+
+        const images = Array.isArray(itemData.images)
+            ? itemData.images.map(String).filter(Boolean)
+            : [];
+        const imageUrl =
+            itemData.image_url || (images.length > 0 ? images[0] : null);
+
+        const payload: Record<string, unknown> = {
+            name,
+            merchant_id: merchantId,
+            category_id: itemData.category_id || null,
+            price: Number(itemData.price) || 0,
+            description: itemData.description ? String(itemData.description).trim() : null,
+            is_available: itemData.is_available !== false,
+            stock_quantity: Number(itemData.stock_quantity ?? 0) || 0,
+            track_stock: itemData.track_stock !== false,
+            images,
+            image_url: imageUrl,
+        };
+
         const { data, error } = await supabase
             .from('products')
-            .insert([itemData])
+            .insert([payload])
             .select()
             .single();
 
@@ -101,9 +132,43 @@ export class AdminItemsService {
     }
 
     async updateItem(id: string, updates: Record<string, any>) {
+        const patch: Record<string, unknown> = {};
+        if (updates.name !== undefined) {
+            const name = String(updates.name || '').trim();
+            if (!name) return { success: false, message: 'Name is required' };
+            patch.name = name;
+        }
+        if (updates.merchant_id !== undefined || updates.store_id !== undefined) {
+            patch.merchant_id = updates.merchant_id || updates.store_id;
+        }
+        if (updates.category_id !== undefined) patch.category_id = updates.category_id || null;
+        if (updates.price !== undefined) patch.price = Number(updates.price) || 0;
+        if (updates.description !== undefined) {
+            patch.description = updates.description ? String(updates.description).trim() : null;
+        }
+        if (updates.is_available !== undefined) patch.is_available = Boolean(updates.is_available);
+        if (updates.stock_quantity !== undefined) {
+            patch.stock_quantity = Number(updates.stock_quantity) || 0;
+        }
+        if (updates.track_stock !== undefined) patch.track_stock = Boolean(updates.track_stock);
+        if (updates.images !== undefined) {
+            const images = Array.isArray(updates.images)
+                ? updates.images.map(String).filter(Boolean)
+                : [];
+            patch.images = images;
+            if (updates.image_url === undefined) {
+                patch.image_url = images[0] || null;
+            }
+        }
+        if (updates.image_url !== undefined) patch.image_url = updates.image_url || null;
+
+        if (Object.keys(patch).length === 0) {
+            return { success: false, message: 'No fields to update' };
+        }
+
         const { data, error } = await supabase
             .from('products')
-            .update(updates)
+            .update(patch)
             .eq('id', id)
             .select()
             .single();

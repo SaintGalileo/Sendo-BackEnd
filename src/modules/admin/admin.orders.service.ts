@@ -63,8 +63,9 @@ export class AdminOrdersService {
                 preparing: ['preparing', 'ready_for_pickup'],
                 processing: ['preparing', 'ready_for_pickup'],
                 on_the_way: ['on_the_way', 'picked_up'],
-                cancelled: ['cancelled', 'canceled'],
-                canceled: ['cancelled', 'canceled'],
+                // DB enum uses British spelling only (`cancelled`); map US alias.
+                cancelled: ['cancelled'],
+                canceled: ['cancelled'],
             };
             const values = grouped[filters.status] || [filters.status];
             query = values.length === 1 ? query.eq('status', values[0]) : query.in('status', values);

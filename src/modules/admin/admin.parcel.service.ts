@@ -32,14 +32,15 @@ export class AdminParcelService {
                 o.status || o.order_status || '';
 
             const unassigned = all.filter((o) =>
-                ['pending', 'searching_for_deliverymen'].includes(statusOf(o)),
+                !o.courier_id &&
+                ['pending', 'ready_for_pickup', 'accepted'].includes(statusOf(o)),
             ).length;
             const outForDelivery = all.filter((o) =>
-                ['on_the_way', 'picked_up', 'out_for_delivery'].includes(statusOf(o)),
+                ['on_the_way', 'picked_up'].includes(statusOf(o)),
             ).length;
             const delivered = all.filter((o) => statusOf(o) === 'delivered').length;
             const returned = all.filter((o) =>
-                ['cancelled', 'returned', 'canceled'].includes(statusOf(o)),
+                ['cancelled'].includes(statusOf(o)),
             ).length;
 
             const grossSale = all

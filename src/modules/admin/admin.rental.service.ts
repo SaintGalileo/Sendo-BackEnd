@@ -50,7 +50,7 @@ export class AdminRentalService {
                     .from('orders')
                     .select('total_amount, created_at, status')
                     .or('type.eq.rental,module.eq.rental')
-                    .in('status', ['completed', 'delivered'])
+                    .in('status', ['delivered'])
                     .order('created_at', { ascending: false })
                     .limit(365),
             ]);
@@ -61,17 +61,13 @@ export class AdminRentalService {
 
             const pending = all.filter((o) => statusOf(o) === 'pending').length;
             const ongoing = all.filter((o) =>
-                ['accepted', 'in_use', 'ongoing', 'on_the_way'].includes(statusOf(o)),
+                ['accepted', 'preparing', 'ready_for_pickup', 'picked_up', 'on_the_way'].includes(statusOf(o)),
             ).length;
-            const completed = all.filter((o) =>
-                ['completed', 'delivered'].includes(statusOf(o)),
-            ).length;
-            const cancelled = all.filter((o) =>
-                ['cancelled', 'canceled'].includes(statusOf(o)),
-            ).length;
+            const completed = all.filter((o) => statusOf(o) === 'delivered').length;
+            const cancelled = all.filter((o) => statusOf(o) === 'cancelled').length;
 
             const grossEarnings = all
-                .filter((o) => ['completed', 'delivered'].includes(statusOf(o)))
+                .filter((o) => statusOf(o) === 'delivered')
                 .reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0);
 
             const tripTypeOf = (o: { trip_type?: string }) =>

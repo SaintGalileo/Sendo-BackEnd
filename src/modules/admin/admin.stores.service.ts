@@ -48,6 +48,7 @@ function isVerificationComplete(row: Record<string, any>): { ok: boolean; missin
     if (row.latitude == null || !Number.isFinite(Number(row.latitude))) missing.push('latitude');
     if (row.longitude == null || !Number.isFinite(Number(row.longitude))) missing.push('longitude');
     if (!String(row.logo_url || '').trim()) missing.push('logo');
+    if (!String(row.banner_url || '').trim()) missing.push('banner');
     return { ok: missing.length === 0, missing };
 }
 

@@ -1,5 +1,6 @@
 import { supabase } from '../../config/supabase';
 import { SocketService } from '../notifications/socket.service';
+import { OrderStatus } from '../../common/constants/orderStatus';
 
 const ORDER_SELECT = `
     *,
@@ -8,19 +9,42 @@ const ORDER_SELECT = `
     courier:couriers!orders_courier_id_fkey(id, name, vehicle_type, plate_number, is_online, location:courier_locations(lat, lng, updated_at))
 `;
 
-/** Courier has accepted/been assigned but is not yet out for delivery. */
-const ACCEPTED_STATUSES = ['ready_for_pickup', 'accepted', 'preparing', 'picked_up'] as const;
-/** Courier is actively delivering to the customer. */
-const OUT_FOR_DELIVERY_STATUSES = ['on_the_way', 'out_for_delivery'] as const;
+/**
+ * Canonical DB enum `public.order_status` (see OrderStatus + migrations):
+ * pending | accepted | preparing | ready_for_pickup | picked_up | on_the_way | delivered | cancelled
+ *
+ * UI buckets (not DB values):
+ * - unassigned        → ready_for_pickup, no courier
+ * - accepted          → courier assigned, not yet out (ready_for_pickup | accepted | preparing)
+ * - out_for_delivery  → picked_up | on_the_way  (UI label only; DB has no "out_for_delivery")
+ */
+
+/** Waiting at merchant / assigned courier not yet en route. */
+const ACCEPTED_BY_COURIER_STATUSES = [
+    OrderStatus.READY_FOR_PICKUP,
+    OrderStatus.ACCEPTED,
+    OrderStatus.PREPARING,
+] as const;
+
+/** Courier has the parcel and is delivering (UI "Out for delivery"). */
+const OUT_FOR_DELIVERY_STATUSES = [
+    OrderStatus.PICKED_UP,
+    OrderStatus.ON_THE_WAY,
+] as const;
+
+const ONGOING_STATUSES = [
+    ...ACCEPTED_BY_COURIER_STATUSES,
+    ...OUT_FOR_DELIVERY_STATUSES,
+] as const;
+
 const MAP_ACTIVE_STATUSES = [
-    'pending',
-    'ready_for_pickup',
-    'accepted',
-    'preparing',
-    'picked_up',
-    'on_the_way',
-    'out_for_delivery',
-    'delivered',
+    OrderStatus.PENDING,
+    OrderStatus.ACCEPTED,
+    OrderStatus.PREPARING,
+    OrderStatus.READY_FOR_PICKUP,
+    OrderStatus.PICKED_UP,
+    OrderStatus.ON_THE_WAY,
+    OrderStatus.DELIVERED,
 ] as const;
 
 const PAIR_COLORS = [
@@ -66,15 +90,36 @@ function orderStatusOf(row: any): string {
     return String(row?.status || row?.order_status || '').toLowerCase();
 }
 
+/** Map DB status → UI bucket used by DispatchMap filters / overview cards. */
 function mapStatusBucket(status: string, hasCourier: boolean): string {
-    if (status === 'delivered') return 'delivered';
-    if (OUT_FOR_DELIVERY_STATUSES.includes(status as any)) return 'out_for_delivery';
-    if (ACCEPTED_STATUSES.includes(status as any) && hasCourier) return 'accepted';
-    if (!hasCourier && (status === 'ready_for_pickup' || status === 'pending' || status === 'accepted')) {
+    if (status === OrderStatus.DELIVERED) return 'delivered';
+    if (status === OrderStatus.CANCELLED) return 'cancelled';
+    if ((OUT_FOR_DELIVERY_STATUSES as readonly string[]).includes(status)) {
+        return 'out_for_delivery';
+    }
+    if (hasCourier && (ACCEPTED_BY_COURIER_STATUSES as readonly string[]).includes(status)) {
+        return 'accepted';
+    }
+    if (
+        !hasCourier &&
+        (status === OrderStatus.READY_FOR_PICKUP ||
+            status === OrderStatus.PENDING ||
+            status === OrderStatus.ACCEPTED)
+    ) {
         return 'unassigned';
     }
-    if (status === 'pending') return 'pending';
+    if (status === OrderStatus.PENDING) return 'pending';
     return hasCourier ? 'accepted' : 'unassigned';
+}
+
+function shapeOrderRow(row: Record<string, unknown>) {
+    const status = orderStatusOf(row);
+    return {
+        ...row,
+        status,
+        order_status: status,
+        total_amount: row.total_amount ?? row.total_price,
+    };
 }
 
 function finiteCoord(v: unknown): number | null {
@@ -89,7 +134,7 @@ export class AdminDispatchService {
         const { data, error, count } = await supabase
             .from('orders')
             .select(ORDER_SELECT, { count: 'exact' })
-            .in('status', ['ready_for_pickup'])
+            .eq('status', OrderStatus.READY_FOR_PICKUP)
             .is('courier_id', null)
             .order('created_at', { ascending: true })
             .range(offset, offset + limit - 1);
@@ -100,7 +145,7 @@ export class AdminDispatchService {
 
         return {
             success: true,
-            data,
+            data: (data || []).map((row) => shapeOrderRow(row as Record<string, unknown>)),
             pagination: {
                 page,
                 limit,
@@ -112,17 +157,16 @@ export class AdminDispatchService {
 
     /**
      * Ongoing = courier assigned and still in progress
-     * (accepted / out for delivery style statuses).
+     * (accepted-by-courier + out-for-delivery statuses).
      */
     async listOngoingOrders(page = 1, limit = 20) {
         const offset = (page - 1) * limit;
-        const statuses = [...ACCEPTED_STATUSES, ...OUT_FOR_DELIVERY_STATUSES];
 
         const { data, error, count } = await supabase
             .from('orders')
             .select(ORDER_SELECT, { count: 'exact' })
             .not('courier_id', 'is', null)
-            .in('status', statuses)
+            .in('status', [...ONGOING_STATUSES])
             .order('created_at', { ascending: false })
             .range(offset, offset + limit - 1);
 
@@ -132,7 +176,7 @@ export class AdminDispatchService {
 
         return {
             success: true,
-            data,
+            data: (data || []).map((row) => shapeOrderRow(row as Record<string, unknown>)),
             pagination: { page, limit, total: count || 0, totalPages: Math.ceil((count || 0) / limit) },
         };
     }
@@ -151,6 +195,7 @@ export class AdminDispatchService {
             supabase
                 .from('orders')
                 .select(ORDER_SELECT)
+                .in('status', [...MAP_ACTIVE_STATUSES])
                 .order('created_at', { ascending: false })
                 .limit(200),
         ]);
@@ -173,9 +218,22 @@ export class AdminDispatchService {
             return colorByCourier.get(courierId)!;
         };
 
+        const latestLocation = (raw: unknown) => {
+            if (!raw) return null;
+            const list = Array.isArray(raw) ? raw : [raw];
+            if (!list.length) return null;
+            return [...list].sort((a: any, b: any) => {
+                const ta = a?.updated_at ? new Date(a.updated_at).getTime() : 0;
+                const tb = b?.updated_at ? new Date(b.updated_at).getTime() : 0;
+                return tb - ta;
+            })[0];
+        };
+
+        const deliveredCutoff = Date.now() - 2 * 60 * 60 * 1000;
+
         const couriers = (couriersRes.data || [])
             .map((row: any) => {
-                const loc = Array.isArray(row.location) ? row.location[0] : row.location;
+                const loc = latestLocation(row.location);
                 const lat = finiteCoord(loc?.lat);
                 const lng = finiteCoord(loc?.lng);
                 if (lat == null || lng == null) return null;
@@ -201,11 +259,14 @@ export class AdminDispatchService {
         const orders = (ordersRes.data || [])
             .map((row: any) => {
                 const status = orderStatusOf(row);
-                if (!MAP_ACTIVE_STATUSES.includes(status as any) && status !== 'cancelled') {
-                    // keep delivered + active only
+                if (!(MAP_ACTIVE_STATUSES as readonly string[]).includes(status)) return null;
+
+                // Keep delivered deliveries only for a short window so the map stays usable.
+                if (status === OrderStatus.DELIVERED) {
+                    const ts = row.updated_at || row.delivered_at || row.created_at;
+                    const t = ts ? new Date(String(ts)).getTime() : 0;
+                    if (!t || t < deliveredCutoff) return null;
                 }
-                if (status === 'cancelled') return null;
-                if (!MAP_ACTIVE_STATUSES.includes(status as any)) return null;
 
                 const merchantLat = finiteCoord(row.merchant?.latitude);
                 const merchantLng = finiteCoord(row.merchant?.longitude);
@@ -225,9 +286,7 @@ export class AdminDispatchService {
                 let courierLat: number | null = null;
                 let courierLng: number | null = null;
                 if (row.courier) {
-                    const cloc = Array.isArray(row.courier.location)
-                        ? row.courier.location[0]
-                        : row.courier.location;
+                    const cloc = latestLocation(row.courier.location);
                     courierLat = finiteCoord(cloc?.lat);
                     courierLng = finiteCoord(cloc?.lng);
                 }
@@ -284,15 +343,25 @@ export class AdminDispatchService {
         };
 
         const selectLite = 'id, status, merchant:merchants!orders_merchant_id_fkey(type)';
-        let unassignedData: any[] | null = null;
-        let acceptedData: any[] | null = null;
-        let outData: any[] | null = null;
 
         const [u, a, o] = await Promise.all([
-            supabase.from('orders').select(selectLite).eq('status', 'ready_for_pickup').is('courier_id', null),
-            supabase.from('orders').select(selectLite).not('courier_id', 'is', null).in('status', [...ACCEPTED_STATUSES]),
-            supabase.from('orders').select(selectLite).not('courier_id', 'is', null).in('status', [...OUT_FOR_DELIVERY_STATUSES]),
+            supabase
+                .from('orders')
+                .select(selectLite)
+                .eq('status', OrderStatus.READY_FOR_PICKUP)
+                .is('courier_id', null),
+            supabase
+                .from('orders')
+                .select(selectLite)
+                .not('courier_id', 'is', null)
+                .in('status', [...ACCEPTED_BY_COURIER_STATUSES]),
+            supabase
+                .from('orders')
+                .select(selectLite)
+                .not('courier_id', 'is', null)
+                .in('status', [...OUT_FOR_DELIVERY_STATUSES]),
         ]);
+
         if (u.error || a.error || o.error) {
             return {
                 success: false,
@@ -301,24 +370,21 @@ export class AdminDispatchService {
                 data: null,
             };
         }
-        unassignedData = u.data || [];
-        acceptedData = a.data || [];
-        outData = o.data || [];
 
-        for (const row of unassignedData || []) {
+        for (const row of u.data || []) {
             const moduleKey = resolveModuleKey((row as any).merchant?.type);
             const cat = MODULE_TO_CATEGORY[moduleKey] || '1';
             bump(cat, 'unassigned');
         }
 
-        for (const row of acceptedData || []) {
+        for (const row of a.data || []) {
             const moduleKey = resolveModuleKey((row as any).merchant?.type);
             const cat = MODULE_TO_CATEGORY[moduleKey] || '1';
             bump(cat, 'accepted');
             bump(cat, 'ongoing');
         }
 
-        for (const row of outData || []) {
+        for (const row of o.data || []) {
             const moduleKey = resolveModuleKey((row as any).merchant?.type);
             const cat = MODULE_TO_CATEGORY[moduleKey] || '1';
             bump(cat, 'outForDelivery');
@@ -340,7 +406,6 @@ export class AdminDispatchService {
     }
 
     async assignCourier(orderId: string, courierId: string) {
-        // Verify courier exists and is online
         const { data: courier, error: courierError } = await supabase
             .from('couriers')
             .select('id, user_id, name, is_online')
@@ -351,7 +416,6 @@ export class AdminDispatchService {
             return { success: false, message: 'Courier not found' };
         }
 
-        // Verify order exists and is assignable
         const { data: order, error: orderError } = await supabase
             .from('orders')
             .select('id, status, courier_id')
@@ -366,12 +430,17 @@ export class AdminDispatchService {
             return { success: false, message: 'Order already has a courier assigned' };
         }
 
+        if (order.status !== OrderStatus.READY_FOR_PICKUP) {
+            return {
+                success: false,
+                message: `Order must be ready_for_pickup to assign (current: ${order.status})`,
+            };
+        }
+
+        // Match courier.acceptOrder: assign courier only; keep status ready_for_pickup.
         const { data, error } = await supabase
             .from('orders')
-            .update({
-                courier_id: courierId,
-                status: 'picked_up',
-            })
+            .update({ courier_id: courierId })
             .eq('id', orderId)
             .select()
             .single();
@@ -380,7 +449,6 @@ export class AdminDispatchService {
             return { success: false, message: error.message };
         }
 
-        // Emit socket events
         try {
             const socketService = SocketService.getInstance();
             socketService.emitToDrivers('delivery:assigned', {
@@ -392,6 +460,10 @@ export class AdminDispatchService {
             // Socket notification is best-effort
         }
 
-        return { success: true, message: 'Courier assigned successfully', data };
+        return {
+            success: true,
+            message: 'Courier assigned successfully',
+            data: shapeOrderRow(data as Record<string, unknown>),
+        };
     }
 }

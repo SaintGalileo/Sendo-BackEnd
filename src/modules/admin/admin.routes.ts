@@ -161,6 +161,7 @@ router.delete('/attributes/:id', attributesCtrl.deleteAttribute);
 // ── Units ──
 router.get('/units', unitsCtrl.listUnits);
 router.post('/units', unitsCtrl.createUnit);
+router.get('/units/:id', unitsCtrl.getUnit);
 router.put('/units/:id', unitsCtrl.updateUnit);
 router.delete('/units/:id', unitsCtrl.deleteUnit);
 
