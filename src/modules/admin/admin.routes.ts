@@ -206,6 +206,7 @@ router.delete('/notifications/:id', notificationsCtrl.delete);
 // ── Messages ──
 router.get('/messages', messagesCtrl.list);
 router.get('/messages/:id', messagesCtrl.getById);
+router.patch('/messages/:id/read', messagesCtrl.markRead);
 
 // ── Refunds ──
 router.get('/refunds', refundsCtrl.list);

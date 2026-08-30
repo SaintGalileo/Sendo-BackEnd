@@ -14,4 +14,10 @@ export class AdminMessagesController {
         const result = await service.getById(req.params.id as string);
         return res.status(result.success ? 200 : 400).json(result);
     }
+
+    async markRead(req: Request, res: Response) {
+        const isRead = req.body?.is_read !== false && req.body?.read !== false;
+        const result = await service.markRead(req.params.id as string, Boolean(isRead));
+        return res.status(result.success ? 200 : 400).json(result);
+    }
 }

@@ -9,6 +9,7 @@ export interface OrderFilters {
     city?: string;
     state?: string;
     zone?: string;
+    merchant_id?: string;
     page?: number;
     limit?: number;
 }
@@ -46,6 +47,9 @@ export class AdminOrdersService {
 
         if (merchantIds) {
             query = query.in('merchant_id', merchantIds);
+        }
+        if (filters.merchant_id) {
+            query = query.eq('merchant_id', filters.merchant_id);
         }
 
         const paymentStatusValues = new Set([

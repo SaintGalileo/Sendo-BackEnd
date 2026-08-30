@@ -222,15 +222,51 @@ export class AdminStoresService {
             .from('merchants')
             .select(`
                 *,
-                user:users!merchants_user_id_fkey(id, first_name, last_name, phone, email),
-                categories(*),
-                products(*)
+                user:users!merchants_user_id_fkey(id, first_name, last_name, phone, email, avatar_url)
             `)
             .eq('id', id)
             .single();
 
         if (error) return { success: false, message: error.message, data: null };
-        return { success: true, data };
+
+        const [productsRes, ordersRes, deliveredRes] = await Promise.all([
+            supabase
+                .from('products')
+                .select(
+                    'id, name, price, image_url, images, is_available, stock_quantity, category_id, created_at',
+                    { count: 'exact' },
+                )
+                .eq('merchant_id', id)
+                .order('created_at', { ascending: false })
+                .limit(50),
+            supabase
+                .from('orders')
+                .select('*', { count: 'exact', head: true })
+                .eq('merchant_id', id),
+            supabase
+                .from('orders')
+                .select('total_price', { count: 'exact' })
+                .eq('merchant_id', id)
+                .eq('status', 'delivered')
+                .limit(500),
+        ]);
+
+        const revenue = (deliveredRes.data || []).reduce(
+            (sum: number, o: { total_price?: number | string }) => sum + (Number(o.total_price) || 0),
+            0,
+        );
+
+        return {
+            success: true,
+            data: {
+                ...data,
+                products: productsRes.data || [],
+                product_count: productsRes.count ?? (productsRes.data || []).length,
+                order_count: ordersRes.count || 0,
+                delivered_count: deliveredRes.count || 0,
+                gross_sales: revenue,
+            },
+        };
     }
 
     async updateStoreStatus(id: string, status: string, reason?: string | null) {

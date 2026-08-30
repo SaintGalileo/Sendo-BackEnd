@@ -1,11 +1,15 @@
 import { supabase } from '../../config/supabase';
 import bcrypt from 'bcrypt';
 import { AuthService } from '../auth/auth.service';
+import { normalizeScope, type ScopeFilters } from './admin.scope';
 
 interface ListFilters {
     search?: string;
     page?: number;
     limit?: number;
+    city?: string;
+    state?: string;
+    zone?: string;
 }
 
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
@@ -86,11 +90,46 @@ export class AdminUsersService {
         return q;
     }
 
+    /** User IDs with an address in the selected city/state zone. */
+    private async customerIdsForZone(scope: ScopeFilters): Promise<string[] | null> {
+        const { city, state } = normalizeScope(scope);
+        if (!city && !state) return null;
+        let q = supabase.from('addresses').select('user_id');
+        if (city) q = q.eq('city', city);
+        if (state) q = q.eq('state', state);
+        const { data, error } = await q.limit(5000);
+        if (error) {
+            console.error('[users] addresses zone filter:', error.message);
+            return [];
+        }
+        return [...new Set((data || []).map((r: { user_id: string }) => r.user_id).filter(Boolean))];
+    }
+
+    private applyMerchantZone(query: any, city?: string, state?: string) {
+        let q = query;
+        if (city) q = q.eq('city', city);
+        if (state) q = q.eq('state', state);
+        return q;
+    }
+
     async listCustomers(filters: ListFilters) {
         const page = filters.page || 1;
         const limit = filters.limit || 20;
         const offset = (page - 1) * limit;
         const proUserIds = await this.getProUserIds();
+        const zoneUserIds = await this.customerIdsForZone({
+            city: filters.city,
+            state: filters.state,
+            zone: filters.zone,
+        });
+
+        if (zoneUserIds && zoneUserIds.length === 0) {
+            return {
+                success: true,
+                data: [],
+                pagination: { page, limit, total: 0, totalPages: 0 },
+            };
+        }
 
         let query = this.applyCustomerFilters(
             supabase.from('users').select('*', { count: 'exact' }),
@@ -98,6 +137,10 @@ export class AdminUsersService {
         )
             .order('created_at', { ascending: false })
             .range(offset, offset + limit - 1);
+
+        if (zoneUserIds) {
+            query = query.in('id', zoneUserIds);
+        }
 
         if (filters.search) {
             query = query.or(
@@ -273,10 +316,30 @@ export class AdminUsersService {
         };
     }
 
-    async getUsersOverview() {
+    async getUsersOverview(scope: ScopeFilters = {}) {
         const monthStart = startOfMonthIso();
         const yearStart = startOfYearIso();
         const proUserIds = await this.getProUserIds();
+        const { city, state } = normalizeScope(scope);
+        const hasZone = Boolean(city || state);
+        const zoneUserIds = hasZone ? await this.customerIdsForZone(scope) : null;
+
+        const emptyZoneCustomers = hasZone && zoneUserIds && zoneUserIds.length === 0;
+
+        const customerBase = () => {
+            let q = this.applyCustomerFilters(
+                supabase.from('users').select('*', { count: 'exact', head: true }),
+                proUserIds,
+            );
+            if (zoneUserIds && zoneUserIds.length > 0) q = q.in('id', zoneUserIds);
+            return q;
+        };
+
+        const merchantBase = () => this.applyMerchantZone(
+            supabase.from('merchants').select('*', { count: 'exact', head: true }),
+            city,
+            state,
+        );
 
         // Wave 1: core head-counts only (fast). Never fail the whole overview unless all four fail.
         const [
@@ -293,31 +356,46 @@ export class AdminUsersService {
             employeesTotal,
             employeesNewMonth,
         ] = await Promise.all([
-            this.applyCustomerFilters(
-                supabase.from('users').select('*', { count: 'exact', head: true }),
-                proUserIds,
-            ),
-            this.applyCustomerFilters(
-                supabase.from('users').select('*', { count: 'exact', head: true }),
-                proUserIds,
-            ).gte('created_at', monthStart),
+            emptyZoneCustomers
+                ? Promise.resolve({ count: 0, error: null })
+                : customerBase(),
+            emptyZoneCustomers
+                ? Promise.resolve({ count: 0, error: null })
+                : customerBase().gte('created_at', monthStart),
+            // Couriers are platform-wide (no city/state column on couriers).
             supabase.from('couriers').select('*', { count: 'exact', head: true }),
             supabase.from('couriers').select('*', { count: 'exact', head: true }).eq('is_online', true),
             supabase.from('couriers').select('*', { count: 'exact', head: true }).gte('created_at', monthStart),
-            supabase.from('merchants').select('*', { count: 'exact', head: true }),
-            supabase
-                .from('merchants')
-                .select('*', { count: 'exact', head: true })
-                .in('status', ['active', 'approved', 'open']),
-            supabase
-                .from('merchants')
-                .select('*', { count: 'exact', head: true })
-                .in('status', ['pending', 'requested', 'pending_verification']),
-            supabase
-                .from('merchants')
-                .select('*', { count: 'exact', head: true })
-                .in('status', ['denied', 'rejected', 'inactive']),
-            supabase.from('merchants').select('*', { count: 'exact', head: true }).gte('created_at', monthStart),
+            merchantBase(),
+            this.applyMerchantZone(
+                supabase
+                    .from('merchants')
+                    .select('*', { count: 'exact', head: true })
+                    .in('status', ['verified', 'active', 'approved', 'open']),
+                city,
+                state,
+            ),
+            this.applyMerchantZone(
+                supabase
+                    .from('merchants')
+                    .select('*', { count: 'exact', head: true })
+                    .in('status', ['pending', 'requested', 'pending_verification', 'unverified']),
+                city,
+                state,
+            ),
+            this.applyMerchantZone(
+                supabase
+                    .from('merchants')
+                    .select('*', { count: 'exact', head: true })
+                    .in('status', ['denied', 'rejected', 'inactive', 'suspended']),
+                city,
+                state,
+            ),
+            this.applyMerchantZone(
+                supabase.from('merchants').select('*', { count: 'exact', head: true }).gte('created_at', monthStart),
+                city,
+                state,
+            ),
             supabase.from('users').select('*', { count: 'exact', head: true }).eq('is_admin', true),
             supabase
                 .from('users')
@@ -327,11 +405,14 @@ export class AdminUsersService {
         ]);
 
         const coreFailed =
-            customersTotal.error && couriersTotal.error && merchantsTotal.error && employeesTotal.error;
+            (customersTotal as any).error &&
+            couriersTotal.error &&
+            merchantsTotal.error &&
+            employeesTotal.error;
         if (coreFailed) {
             return {
                 success: false,
-                message: customersTotal.error?.message || 'Could not load user overview',
+                message: (customersTotal as any).error?.message || 'Could not load user overview',
                 data: null,
             };
         }
@@ -339,30 +420,36 @@ export class AdminUsersService {
         // Wave 2: optional growth + recent samples (best-effort; ignore errors).
         const [customersCreated, couriersCreated, merchantsCreated, couriersSample, merchantsSample] =
             await Promise.all([
-                this.applyCustomerFilters(
-                    supabase.from('users').select('created_at'),
-                    proUserIds,
-                )
-                    .gte('created_at', yearStart)
-                    .limit(2000),
+                emptyZoneCustomers
+                    ? Promise.resolve({ data: [] as any[], error: null })
+                    : (() => {
+                          let q = this.applyCustomerFilters(
+                              supabase.from('users').select('created_at'),
+                              proUserIds,
+                          ).gte('created_at', yearStart);
+                          if (zoneUserIds && zoneUserIds.length > 0) q = q.in('id', zoneUserIds);
+                          return q.limit(2000);
+                      })(),
                 supabase
                     .from('couriers')
                     .select('created_at')
                     .gte('created_at', yearStart)
                     .limit(1000),
-                supabase
-                    .from('merchants')
-                    .select('created_at')
-                    .gte('created_at', yearStart)
-                    .limit(1000),
+                this.applyMerchantZone(
+                    supabase.from('merchants').select('created_at').gte('created_at', yearStart),
+                    city,
+                    state,
+                ).limit(1000),
                 supabase
                     .from('couriers')
                     .select('id, name, is_online, created_at')
                     .order('created_at', { ascending: false })
                     .limit(8),
-                supabase
-                    .from('merchants')
-                    .select('id, name, type, status, created_at')
+                this.applyMerchantZone(
+                    supabase.from('merchants').select('id, name, type, status, created_at, logo_url, city, state'),
+                    city,
+                    state,
+                )
                     .order('created_at', { ascending: false })
                     .limit(8),
             ]);
@@ -382,9 +469,12 @@ export class AdminUsersService {
             type: m.type || '',
             status: m.status || '',
             orders: 0,
+            logo_url: m.logo_url || null,
+            city: m.city || null,
+            state: m.state || null,
         }));
 
-        const customers = customersTotal.count || 0;
+        const customers = (customersTotal as any).count || 0;
         const couriers = couriersTotal.count || 0;
         const merchants = merchantsTotal.count || 0;
         const employees = employeesTotal.count || 0;
@@ -393,7 +483,6 @@ export class AdminUsersService {
         const activeMerchants = merchantsActive.count || 0;
         const pendingMerchants = merchantsPending.count || 0;
         const deniedMerchants = merchantsDenied.count || 0;
-        // If status taxonomy isn't populated yet, treat all as active for the mini-stat.
         const resolvedActiveMerchants =
             activeMerchants + pendingMerchants + deniedMerchants > 0
                 ? activeMerchants
@@ -407,14 +496,14 @@ export class AdminUsersService {
                     couriers,
                     merchants,
                     employees,
-                    customersDelta: customersNewMonth.count || 0,
+                    customersDelta: (customersNewMonth as any).count || 0,
                     couriersDelta: couriersNewMonth.count || 0,
                     merchantsDelta: merchantsNewMonth.count || 0,
                     employeesDelta: employeesNewMonth.count || 0,
                 },
                 customers: {
                     total: customers,
-                    newlyJoined: customersNewMonth.count || 0,
+                    newlyJoined: (customersNewMonth as any).count || 0,
                     blocked: 0,
                 },
                 couriers: {
@@ -449,6 +538,7 @@ export class AdminUsersService {
                 ],
                 topCouriers,
                 topMerchants,
+                zone: hasZone ? { city: city || null, state: state || null } : null,
             },
         };
     }

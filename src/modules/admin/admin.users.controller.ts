@@ -6,11 +6,14 @@ const service = new AdminUsersService();
 
 export class AdminUsersController {
     async listCustomers(req: Request, res: Response) {
-        const { search, page, limit } = req.query;
+        const { search, page, limit, city, state, zone } = req.query;
         const result = await service.listCustomers({
             search: search as string,
             page: page ? Number(page) : undefined,
             limit: limit ? Number(limit) : undefined,
+            city: city as string | undefined,
+            state: state as string | undefined,
+            zone: zone as string | undefined,
         });
         return res.status(result.success ? 200 : 500).json(result);
     }
@@ -61,9 +64,14 @@ export class AdminUsersController {
         return res.status(result.success ? 200 : 500).json(result);
     }
 
-    async getUsersOverview(_req: Request, res: Response) {
+    async getUsersOverview(req: Request, res: Response) {
         try {
-            const result = await service.getUsersOverview();
+            const { city, state, zone } = req.query;
+            const result = await service.getUsersOverview({
+                city: city as string | undefined,
+                state: state as string | undefined,
+                zone: zone as string | undefined,
+            });
             return res.json(result);
         } catch (err: any) {
             return res.status(500).json({

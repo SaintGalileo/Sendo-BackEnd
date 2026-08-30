@@ -5,7 +5,7 @@ const service = new AdminOrdersService();
 
 export class AdminOrdersController {
     async listOrders(req: Request, res: Response) {
-        const { status, payment_status, search, module, city, state, zone, page, limit } = req.query;
+        const { status, payment_status, search, module, city, state, zone, merchant_id, page, limit } = req.query;
         const result = await service.listOrders({
             status: status as string,
             payment_status: payment_status as string,
@@ -14,6 +14,7 @@ export class AdminOrdersController {
             city: city as string,
             state: state as string,
             zone: zone as string,
+            merchant_id: merchant_id as string,
             page: page ? Number(page) : undefined,
             limit: limit ? Number(limit) : undefined,
         });
