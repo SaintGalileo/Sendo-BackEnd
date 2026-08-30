@@ -25,6 +25,7 @@ import { AdminZonesController } from './admin.zones.controller';
 import { AdminDeliveryController } from './admin.delivery.controller';
 import { AdminParcelController } from './admin.parcel.controller';
 import { AdminRentalController } from './admin.rental.controller';
+import { AdminUploadsController } from './admin.uploads.controller';
 
 const router = Router();
 const ordersCtrl = new AdminOrdersController();
@@ -48,6 +49,7 @@ const messagesCtrl = new AdminMessagesController();
 const refundsCtrl = new AdminRefundsController();
 const settingsCtrl = new AdminSettingsController();
 const zonesCtrl = new AdminZonesController();
+const uploadsCtrl = new AdminUploadsController();
 const deliveryCtrl = new AdminDeliveryController();
 const parcelCtrl = new AdminParcelController();
 const rentalCtrl = new AdminRentalController();
@@ -60,6 +62,9 @@ const requireSuperAdmin = roleMiddleware(['super_admin']);
 
 // Health check
 router.get('/health', (_req, res) => res.json({ success: true, message: 'Admin API healthy' }));
+
+// ── Uploads ──
+router.post('/uploads', (req, res) => uploadsCtrl.upload(req, res));
 
 // ── Dashboard ──
 router.get('/dashboard', dashboardCtrl.getOverview);
@@ -84,6 +89,7 @@ router.get('/employees', (req, res) => usersCtrl.listEmployees(req, res));
 router.post('/employees', requireSuperAdmin, (req, res) => usersCtrl.createEmployee(req, res));
 router.put('/employees/:id', requireSuperAdmin, (req, res) => usersCtrl.updateEmployee(req, res));
 router.put('/employees/:id/status', requireSuperAdmin, (req, res) => usersCtrl.updateEmployeeStatus(req as any, res));
+router.post('/employees/:id/reset-password', requireSuperAdmin, (req, res) => usersCtrl.resetEmployeePassword(req, res));
 
 // ── Stores ──
 router.get('/stores', storesCtrl.listStores);
@@ -94,6 +100,7 @@ router.put('/stores/:id/status', storesCtrl.updateStoreStatus);
 
 // ── Dispatch ──
 router.get('/dispatch/counts', dispatchCtrl.getCounts);
+router.get('/dispatch/overview-map', dispatchCtrl.getOverviewMap);
 router.get('/dispatch/orders/available', dispatchCtrl.listAvailableOrders);
 router.get('/dispatch/orders/ongoing', dispatchCtrl.listOngoingOrders);
 router.post('/dispatch/orders/:orderId/assign', dispatchCtrl.assignCourier);
@@ -147,6 +154,7 @@ router.delete('/categories/:id', categoriesCtrl.deleteCategory);
 // ── Attributes ──
 router.get('/attributes', attributesCtrl.listAttributes);
 router.post('/attributes', attributesCtrl.createAttribute);
+router.get('/attributes/:id', attributesCtrl.getAttribute);
 router.put('/attributes/:id', attributesCtrl.updateAttribute);
 router.delete('/attributes/:id', attributesCtrl.deleteAttribute);
 
@@ -177,7 +185,9 @@ router.delete('/advertisements/:id', advertisementsCtrl.delete);
 // ── Flash Sales ──
 router.get('/flash-sales', flashSalesCtrl.list);
 router.post('/flash-sales', flashSalesCtrl.create);
+router.get('/flash-sales/:id', flashSalesCtrl.getById);
 router.put('/flash-sales/:id', flashSalesCtrl.update);
+router.put('/flash-sales/:id/products', flashSalesCtrl.setProducts);
 router.delete('/flash-sales/:id', flashSalesCtrl.delete);
 
 // ── Banners ──
@@ -245,8 +255,15 @@ router.get('/settings/login', settingsCtrl.getLoginSettings);
 router.put('/settings/login', requireSuperAdmin, settingsCtrl.updateLoginSettings);
 router.get('/settings/cms/:pageKey', settingsCtrl.getCmsPage);
 router.put('/settings/cms/:pageKey', settingsCtrl.updateCmsPage);
+router.get('/settings/email-templates/:templateKey', settingsCtrl.getEmailTemplate);
+router.put('/settings/email-templates/:templateKey', requireSuperAdmin, settingsCtrl.updateEmailTemplate);
+router.get('/settings/gallery', settingsCtrl.getGallery);
+router.put('/settings/gallery', requireSuperAdmin, settingsCtrl.updateGallery);
+router.get('/settings/languages', settingsCtrl.getLanguages);
+router.put('/settings/languages', requireSuperAdmin, settingsCtrl.updateLanguages);
 
 // ── Zones (read: all admins; mutations: super-admin) ──
+router.get('/zones/locations', zonesCtrl.listLocationZones);
 router.get('/zones', zonesCtrl.listZones);
 router.post('/zones', requireSuperAdmin, zonesCtrl.createZone);
 router.put('/zones/:id', requireSuperAdmin, zonesCtrl.updateZone);

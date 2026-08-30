@@ -395,7 +395,7 @@ export class AuthService {
                 last_name: lastName,
                 name: storeName,
                 type: merchantType,
-                status: 'pending',
+                status: 'unverified',
                 description,
                 phone: contactPhone || decoded.phone,
                 contact_email: contactEmail || email,
@@ -696,6 +696,108 @@ export class AuthService {
         }
 
         return { success: true, message: 'Password updated' };
+    }
+
+    async requestAdminPasswordReset(email: string): Promise<{ success: boolean; message: string }> {
+        const normalized = (email || '').trim().toLowerCase();
+        if (!normalized) return { success: false, message: 'Email is required' };
+
+        const { data: user } = await supabase
+            .from('users')
+            .select('id, email, first_name, last_name, is_admin')
+            .eq('email', normalized)
+            .eq('is_admin', true)
+            .maybeSingle();
+
+        // Always return success to avoid email enumeration
+        if (!user) {
+            return { success: true, message: 'If that email exists, reset instructions were sent' };
+        }
+
+        const token = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+        const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+        await supabase.from('otps').insert([
+            {
+                email: normalized,
+                otp_code: token,
+                expires_at: expiresAt.toISOString(),
+                is_verified: false,
+            },
+        ]);
+
+        const adminAppUrl = process.env.ADMIN_APP_URL || process.env.FRONTEND_URL || 'http://localhost:3000';
+        const link = `${adminAppUrl.replace(/\/$/, '')}/reset-password?token=${encodeURIComponent(token)}&email=${encodeURIComponent(normalized)}`;
+
+        // Prefer saved template from admin_settings
+        let subject = 'Reset your admin password';
+        let body = `Hi {{name}},\n\nUse this link to reset your password: {{link}}\n\nOr use this token: {{token}}\n\nThis expires in {{expiry_minutes}} minutes.`;
+        try {
+            const { data: tpl } = await supabase
+                .from('admin_settings')
+                .select('value')
+                .eq('key', 'email_template.admin-forgot-password')
+                .maybeSingle();
+            if (tpl?.value?.subject) subject = String(tpl.value.subject);
+            if (tpl?.value?.body) body = String(tpl.value.body);
+        } catch {
+            /* use defaults */
+        }
+
+        const name = `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Admin';
+        const html = body
+            .replace(/\{\{name\}\}/g, name)
+            .replace(/\{\{link\}\}/g, link)
+            .replace(/\{\{token\}\}/g, token)
+            .replace(/\{\{expiry_minutes\}\}/g, '30')
+            .replace(/\n/g, '<br/>');
+
+        await emailService.sendEmail(normalized, subject, html);
+        return { success: true, message: 'If that email exists, reset instructions were sent' };
+    }
+
+    async confirmAdminPasswordReset(
+        email: string,
+        token: string,
+        newPassword: string,
+    ): Promise<{ success: boolean; message: string }> {
+        const normalized = (email || '').trim().toLowerCase();
+        if (!normalized || !token) return { success: false, message: 'Email and token are required' };
+        if (!newPassword || newPassword.length < 8) {
+            return { success: false, message: 'Password must be at least 8 characters' };
+        }
+
+        const { data: otp, error } = await supabase
+            .from('otps')
+            .select('*')
+            .eq('email', normalized)
+            .eq('otp_code', token)
+            .eq('is_verified', false)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        if (error || !otp) return { success: false, message: 'Invalid or expired reset token' };
+        if (new Date(otp.expires_at).getTime() < Date.now()) {
+            return { success: false, message: 'Reset token has expired' };
+        }
+
+        const { data: user } = await supabase
+            .from('users')
+            .select('id, is_admin')
+            .eq('email', normalized)
+            .eq('is_admin', true)
+            .maybeSingle();
+        if (!user) return { success: false, message: 'Admin account not found' };
+
+        const password_hash = await AuthService.hashPassword(newPassword);
+        const { error: updateError } = await supabase
+            .from('users')
+            .update({ password_hash })
+            .eq('id', user.id);
+        if (updateError) return { success: false, message: updateError.message };
+
+        await supabase.from('otps').update({ is_verified: true }).eq('id', otp.id);
+        return { success: true, message: 'Password has been reset. You can sign in now.' };
     }
 
     async registerAdmin(

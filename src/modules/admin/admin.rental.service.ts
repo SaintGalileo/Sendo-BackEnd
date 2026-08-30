@@ -43,21 +43,21 @@ export class AdminRentalService {
             const [ordersResult, salesResult] = await Promise.all([
                 supabase
                     .from('orders')
-                    .select('id, order_status, total_amount, created_at, consumer_id, merchant_id, trip_type')
+                    .select('id, status, total_amount, created_at, consumer_id, merchant_id, trip_type')
                     .or('type.eq.rental,module.eq.rental')
                     .limit(2000),
                 supabase
                     .from('orders')
-                    .select('total_amount, created_at, order_status')
+                    .select('total_amount, created_at, status')
                     .or('type.eq.rental,module.eq.rental')
-                    .in('order_status', ['completed', 'delivered'])
+                    .in('status', ['completed', 'delivered'])
                     .order('created_at', { ascending: false })
                     .limit(365),
             ]);
 
             const all = (!ordersResult.error && ordersResult.data) ? ordersResult.data : [];
             const statusOf = (o: { order_status?: string; status?: string }) =>
-                o.order_status || (o as { status?: string }).status || '';
+                o.status || o.order_status || '';
 
             const pending = all.filter((o) => statusOf(o) === 'pending').length;
             const ongoing = all.filter((o) =>

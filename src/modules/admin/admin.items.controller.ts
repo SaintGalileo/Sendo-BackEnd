@@ -5,10 +5,14 @@ const service = new AdminItemsService();
 
 export class AdminItemsController {
     async listItems(req: Request, res: Response) {
-        const { search, store_id, page, limit } = req.query;
+        const { search, store_id, module, city, state, zone, page, limit } = req.query;
         const result = await service.listItems({
             search: search as string,
             store_id: store_id as string,
+            module: module as string,
+            city: city as string,
+            state: state as string,
+            zone: zone as string,
             page: page ? Number(page) : undefined,
             limit: limit ? Number(limit) : undefined,
         });

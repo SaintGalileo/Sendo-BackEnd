@@ -11,16 +11,16 @@ export class AdminParcelService {
             ] = await Promise.all([
                 supabase
                     .from('orders')
-                    .select('id, order_status, total_amount, created_at, courier_id, consumer_id')
+                    .select('id, status, total_amount, created_at, courier_id, consumer_id')
                     .or('type.eq.parcel,module.eq.parcel')
                     .limit(2000),
                 supabase.from('users').select('*', { count: 'exact', head: true }),
                 supabase.from('couriers').select('*', { count: 'exact', head: true }),
                 supabase
                     .from('orders')
-                    .select('total_amount, created_at, order_status')
+                    .select('total_amount, created_at, status')
                     .or('type.eq.parcel,module.eq.parcel')
-                    .eq('order_status', 'delivered')
+                    .eq('status', 'delivered')
                     .order('created_at', { ascending: false })
                     .limit(365),
             ]);
@@ -29,7 +29,7 @@ export class AdminParcelService {
             const all = (!ordersResult.error && ordersResult.data) ? ordersResult.data : [];
 
             const statusOf = (o: { order_status?: string; status?: string }) =>
-                o.order_status || (o as { status?: string }).status || '';
+                o.status || o.order_status || '';
 
             const unassigned = all.filter((o) =>
                 ['pending', 'searching_for_deliverymen'].includes(statusOf(o)),

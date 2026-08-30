@@ -19,6 +19,17 @@ export class AdminAttributesService {
         };
     }
 
+    async getAttribute(id: string) {
+        const { data, error } = await supabase
+            .from('attributes')
+            .select('*')
+            .eq('id', id)
+            .single();
+
+        if (error) return { success: false, message: error.message, data: null };
+        return { success: true, data };
+    }
+
     async createAttribute(attributeData: Record<string, any>) {
         const { data, error } = await supabase
             .from('attributes')

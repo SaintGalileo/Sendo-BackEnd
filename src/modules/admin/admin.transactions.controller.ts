@@ -114,8 +114,9 @@ export class AdminTransactionsController {
         return res.status(result.success ? 200 : 500).json(result);
     }
 
-    async getStoreWiseReport(_req: Request, res: Response) {
-        const result = await service.getStoreWiseReport();
+    async getStoreWiseReport(req: Request, res: Response) {
+        const { from, to } = dateRangeFromQuery(req.query);
+        const result = await service.getStoreWiseReport(from, to);
         return res.status(result.success ? 200 : 500).json(result);
     }
 

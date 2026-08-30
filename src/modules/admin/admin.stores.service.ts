@@ -1,9 +1,15 @@
 import { supabase } from '../../config/supabase';
+import { moduleToMerchantTypes } from './moduleMerchantTypes';
+import { normalizeScope } from './admin.scope';
 
 interface ListFilters {
     search?: string;
     type?: string;
     status?: string;
+    module?: string;
+    city?: string;
+    state?: string;
+    zone?: string;
     page?: number;
     limit?: number;
 }
@@ -22,7 +28,27 @@ interface CreateStoreInput {
     address?: string;
     city?: string;
     state?: string;
+    postal_code?: string;
+    country?: string;
+    latitude?: number | null;
+    longitude?: number | null;
+    logo_url?: string | null;
+    banner_url?: string | null;
     description?: string;
+    verification_rejection_reason?: string | null;
+}
+
+function isVerificationComplete(row: Record<string, any>): { ok: boolean; missing: string[] } {
+    const missing: string[] = [];
+    if (!String(row.name || '').trim()) missing.push('name');
+    if (!String(row.type || '').trim()) missing.push('type');
+    if (!String(row.phone || '').trim()) missing.push('phone');
+    if (!String(row.contact_email || '').trim()) missing.push('email');
+    if (!String(row.address || '').trim()) missing.push('address');
+    if (row.latitude == null || !Number.isFinite(Number(row.latitude))) missing.push('latitude');
+    if (row.longitude == null || !Number.isFinite(Number(row.longitude))) missing.push('longitude');
+    if (!String(row.logo_url || '').trim()) missing.push('logo');
+    return { ok: missing.length === 0, missing };
 }
 
 export class AdminStoresService {
@@ -53,7 +79,7 @@ export class AdminStoresService {
             return { success: false, message: 'Phone or email is required for the merchant owner', data: null };
         }
 
-        const status = (input.status || 'active').trim().toLowerCase();
+        const status = (input.status || 'verified').trim().toLowerCase();
 
         let userId: string | null = null;
         if (phone) {
@@ -103,6 +129,9 @@ export class AdminStoresService {
             userId = newUser.id as string;
         }
 
+        const lat = input.latitude != null ? Number(input.latitude) : null;
+        const lng = input.longitude != null ? Number(input.longitude) : null;
+
         const { data, error } = await supabase
             .from('merchants')
             .insert([
@@ -118,7 +147,14 @@ export class AdminStoresService {
                     address: input.address || null,
                     city: input.city || null,
                     state: input.state || null,
+                    postal_code: input.postal_code || null,
+                    country: input.country || null,
+                    latitude: Number.isFinite(lat as number) ? lat : null,
+                    longitude: Number.isFinite(lng as number) ? lng : null,
+                    logo_url: input.logo_url || null,
+                    banner_url: input.banner_url || null,
                     description: input.description || null,
+                    verified_at: status === 'verified' ? new Date().toISOString() : null,
                 },
             ])
             .select(`
@@ -147,7 +183,22 @@ export class AdminStoresService {
 
         if (filters.type) {
             query = query.eq('type', filters.type);
+        } else {
+            const types = moduleToMerchantTypes(filters.module);
+            if (types) {
+                query = query.in('type', types);
+            }
         }
+
+        const { city, state } = normalizeScope({
+            module: filters.module,
+            city: filters.city,
+            state: filters.state,
+            zone: filters.zone,
+        });
+        if (city) query = query.eq('city', city);
+        if (state) query = query.eq('state', state);
+
         if (filters.status) {
             query = query.eq('status', filters.status);
         }
@@ -181,10 +232,40 @@ export class AdminStoresService {
         return { success: true, data };
     }
 
-    async updateStoreStatus(id: string, status: string) {
+    async updateStoreStatus(id: string, status: string, reason?: string | null) {
+        const normalized = String(status || '').trim().toLowerCase();
+        const updates: Record<string, unknown> = { status: normalized };
+
+        if (normalized === 'verified' || normalized === 'active' || normalized === 'approved') {
+            const { data: existing, error: getErr } = await supabase
+                .from('merchants')
+                .select('*')
+                .eq('id', id)
+                .single();
+            if (getErr || !existing) return { success: false, message: getErr?.message || 'Merchant not found' };
+            const check = isVerificationComplete(existing);
+            if (!check.ok) {
+                return {
+                    success: false,
+                    message: `Cannot verify — missing: ${check.missing.join(', ')}`,
+                    data: null,
+                };
+            }
+            updates.status = 'verified';
+            updates.verified_at = new Date().toISOString();
+            updates.verification_rejection_reason = null;
+        }
+
+        if (normalized === 'rejected' || normalized === 'denied') {
+            const why = String(reason || '').trim();
+            if (!why) return { success: false, message: 'A decline reason is required', data: null };
+            updates.status = 'rejected';
+            updates.verification_rejection_reason = why;
+        }
+
         const { data, error } = await supabase
             .from('merchants')
-            .update({ status })
+            .update(updates)
             .eq('id', id)
             .select()
             .single();

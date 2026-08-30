@@ -63,7 +63,7 @@ function orderTax(row: Record<string, unknown>): number {
 }
 
 function orderStatus(row: Record<string, unknown>): string {
-    return String(row.order_status ?? row.status ?? '—');
+    return String(row.status ?? row.order_status ?? '—');
 }
 
 function applyDateRange<T extends { gte: (col: string, val: string) => T; lte: (col: string, val: string) => T }>(
@@ -162,8 +162,8 @@ export class AdminTransactionsService {
     async getTransactionReport(dateFrom?: string, dateTo?: string) {
         let query = supabase
             .from('orders')
-            .select('total_amount, delivery_fee, order_status, payment_status, payment_method, created_at')
-            .eq('order_status', 'delivered');
+            .select('total_amount, delivery_fee, status, payment_status, payment_method, created_at')
+            .eq('status', 'delivered');
 
         query = applyDateRange(query, dateFrom, dateTo);
 
@@ -424,8 +424,8 @@ export class AdminTransactionsService {
     async getDayWiseReport(dateFrom?: string, dateTo?: string) {
         let query = supabase
             .from('orders')
-            .select('total_amount, delivery_fee, order_status, created_at')
-            .eq('order_status', 'delivered');
+            .select('total_amount, delivery_fee, status, created_at')
+            .eq('status', 'delivered');
 
         query = applyDateRange(query, dateFrom, dateTo);
 
@@ -464,25 +464,91 @@ export class AdminTransactionsService {
         return { success: true, data: Object.values(itemMap) };
     }
 
-    async getStoreWiseReport() {
-        const { data, error } = await supabase
+    async getStoreWiseReport(dateFrom?: string, dateTo?: string) {
+        let query = supabase
             .from('orders')
-            .select('store_id, store_name, total_amount, delivery_fee, order_status')
-            .eq('order_status', 'delivered');
+            .select(`
+                total_amount, status, created_at, merchant_id,
+                merchant:merchants!orders_merchant_id_fkey(id, name)
+            `)
+            .eq('status', 'delivered');
 
-        if (error) return { success: false, message: error.message, data: null };
+        query = applyDateRange(query, dateFrom, dateTo);
 
-        const storeMap: Record<string, { store_id: string; store_name: string; total_orders: number; total_revenue: number }> = {};
-        for (const order of data || []) {
-            const key = order.store_id || 'unknown';
-            if (!storeMap[key]) {
-                storeMap[key] = { store_id: order.store_id, store_name: order.store_name, total_orders: 0, total_revenue: 0 };
+        const { data, error } = await query;
+        if (error) {
+            // Fallback without join / legacy column names
+            let plain = supabase
+                .from('orders')
+                .select('total_amount, status, created_at, merchant_id')
+                .eq('status', 'delivered');
+            plain = applyDateRange(plain, dateFrom, dateTo);
+            const fb = await plain;
+            if (fb.error) return { success: false, message: fb.error.message, data: null };
+
+            const storeMap: Record<string, { store_id: string; store: string; store_name: string; total_orders: number; totalOrders: number; total_revenue: number; totalAmount: number; sl: number }> = {};
+            for (const order of fb.data || []) {
+                const key = String(order.merchant_id || 'unknown');
+                if (!storeMap[key]) {
+                    storeMap[key] = {
+                        store_id: key,
+                        store: '—',
+                        store_name: '—',
+                        total_orders: 0,
+                        totalOrders: 0,
+                        total_revenue: 0,
+                        totalAmount: 0,
+                        sl: 0,
+                    };
+                }
+                storeMap[key].total_orders += 1;
+                storeMap[key].totalOrders += 1;
+                const amt = Number(order.total_amount) || 0;
+                storeMap[key].total_revenue += amt;
+                storeMap[key].totalAmount += amt;
             }
-            storeMap[key].total_orders += 1;
-            storeMap[key].total_revenue += Number(order.total_amount) || 0;
+            const rows = Object.values(storeMap).map((r, i) => ({ ...r, sl: i + 1, action: '' }));
+            return { success: true, data: rows };
         }
 
-        return { success: true, data: Object.values(storeMap) };
+        const storeMap: Record<
+            string,
+            {
+                store_id: string;
+                store: string;
+                store_name: string;
+                total_orders: number;
+                totalOrders: number;
+                total_revenue: number;
+                totalAmount: number;
+                sl: number;
+            }
+        > = {};
+        for (const order of data || []) {
+            const m = order.merchant as { id?: string; name?: string } | null;
+            const key = String(m?.id || order.merchant_id || 'unknown');
+            const name = m?.name || '—';
+            if (!storeMap[key]) {
+                storeMap[key] = {
+                    store_id: key,
+                    store: name,
+                    store_name: name,
+                    total_orders: 0,
+                    totalOrders: 0,
+                    total_revenue: 0,
+                    totalAmount: 0,
+                    sl: 0,
+                };
+            }
+            storeMap[key].total_orders += 1;
+            storeMap[key].totalOrders += 1;
+            const amt = Number(order.total_amount) || 0;
+            storeMap[key].total_revenue += amt;
+            storeMap[key].totalAmount += amt;
+        }
+
+        const rows = Object.values(storeMap).map((r, i) => ({ ...r, sl: i + 1, action: '' }));
+        return { success: true, data: rows };
     }
 
     async getDisbursementReport() {
@@ -504,7 +570,7 @@ export class AdminTransactionsService {
             let query = supabase
                 .from('orders')
                 .select(`
-                    id, order_number, order_status, status, total_amount, total_price,
+                    id, order_number, status, total_amount, total_price,
                     tax_amount, tax, vat, payment_status, created_at, merchant_id,
                     merchant:merchants!orders_merchant_id_fkey(id, name, type)
                 `)
@@ -518,7 +584,7 @@ export class AdminTransactionsService {
                 // Fallback without join / optional tax columns
                 let plain = supabase
                     .from('orders')
-                    .select('id, order_number, order_status, total_amount, created_at, merchant_id')
+                    .select('id, order_number, status, total_amount, created_at, merchant_id')
                     .order('created_at', { ascending: false })
                     .limit(2000);
                 plain = applyDateRange(plain, dateFrom, dateTo);
@@ -647,7 +713,7 @@ export class AdminTransactionsService {
                 .from('orders')
                 .select(`
                     id, merchant_id, total_amount, total_price, tax_amount, tax, vat,
-                    order_status, type, module, created_at,
+                    status, type, module, created_at,
                     merchant:merchants!orders_merchant_id_fkey(id, name, type)
                 `)
                 .order('created_at', { ascending: false })
@@ -659,7 +725,7 @@ export class AdminTransactionsService {
             if (error) {
                 const plain = await supabase
                     .from('orders')
-                    .select('id, merchant_id, total_amount, tax_amount, order_status, type, module, created_at')
+                    .select('id, merchant_id, total_amount, tax_amount, status, type, module, created_at')
                     .limit(4000);
                 if (plain.error) {
                     return emptyList(plain.error.message || 'Orders table not available for tax report');
@@ -727,7 +793,7 @@ export class AdminTransactionsService {
             let query = supabase
                 .from('orders')
                 .select(`
-                    id, order_number, order_status, payment_status, total_amount, total_price,
+                    id, order_number, status, payment_status, total_amount, total_price,
                     created_at, merchant_id, type, module,
                     merchant:merchants!orders_merchant_id_fkey(id, name, type)
                 `)

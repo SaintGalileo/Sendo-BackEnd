@@ -22,6 +22,8 @@ router.post('/register/admin', authController.registerAdmin);
 router.get('/admin/me', authMiddleware, authController.adminMe);
 router.put('/admin/me', authMiddleware, authController.updateAdminProfile);
 router.put('/admin/password', authMiddleware, authController.changeAdminPassword);
+router.post('/admin/forgot-password', authController.requestAdminPasswordReset);
+router.post('/admin/reset-password', authController.confirmAdminPasswordReset);
 
 // Email OTP (For SeerBit and other verifications) - Authenticated
 router.post('/otp/email/send', authMiddleware, authController.sendEmailOTP);

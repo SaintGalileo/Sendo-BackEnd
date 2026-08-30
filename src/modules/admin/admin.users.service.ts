@@ -1,5 +1,6 @@
 import { supabase } from '../../config/supabase';
 import bcrypt from 'bcrypt';
+import { AuthService } from '../auth/auth.service';
 
 interface ListFilters {
     search?: string;
@@ -311,7 +312,7 @@ export class AdminUsersService {
             supabase
                 .from('merchants')
                 .select('*', { count: 'exact', head: true })
-                .in('status', ['pending', 'requested']),
+                .in('status', ['pending', 'requested', 'pending_verification']),
             supabase
                 .from('merchants')
                 .select('*', { count: 'exact', head: true })
@@ -513,6 +514,7 @@ export class AdminUsersService {
         first_name?: string;
         last_name?: string;
         phone?: string | null;
+        avatar_url?: string | null;
     }) {
         const email = (input.email || '').trim().toLowerCase();
         const password = input.password || '';
@@ -538,6 +540,10 @@ export class AdminUsersService {
             input.phone === undefined || input.phone === null
                 ? null
                 : String(input.phone).trim() || null;
+        const avatar_url =
+            input.avatar_url === undefined || input.avatar_url === null
+                ? null
+                : String(input.avatar_url).trim() || null;
 
         if (existing) {
             const { data, error } = await supabase
@@ -550,9 +556,10 @@ export class AdminUsersService {
                     first_name: first_name ?? undefined,
                     last_name: last_name ?? undefined,
                     phone,
+                    avatar_url: avatar_url ?? undefined,
                 })
                 .eq('id', existing.id)
-                .select('id, email, first_name, last_name, phone, is_admin, is_super_admin, created_at')
+                .select('id, email, first_name, last_name, phone, avatar_url, is_admin, is_super_admin, created_at')
                 .single();
 
             if (error) return { success: false, message: error.message, data: null };
@@ -566,12 +573,13 @@ export class AdminUsersService {
                 first_name,
                 last_name,
                 phone,
+                avatar_url,
                 role: 'admin',
                 is_admin: true,
                 is_super_admin: false,
                 password_hash,
             })
-            .select('id, email, first_name, last_name, phone, is_admin, is_super_admin, created_at')
+            .select('id, email, first_name, last_name, phone, avatar_url, is_admin, is_super_admin, created_at')
             .single();
 
         if (error) return { success: false, message: error.message, data: null };
@@ -681,6 +689,27 @@ export class AdminUsersService {
             success: true,
             message: active ? 'Employee activated' : 'Employee deactivated',
             data: this.mapEmployee(data),
+        };
+    }
+
+    async sendEmployeePasswordReset(id: string) {
+        const { data: user, error } = await supabase
+            .from('users')
+            .select('id, email, is_admin')
+            .eq('id', id)
+            .maybeSingle();
+        if (error || !user) return { success: false, message: 'Employee not found', data: null };
+        if (!user.is_admin) return { success: false, message: 'User is not an admin employee', data: null };
+        if (!user.email) return { success: false, message: 'Employee has no email on file', data: null };
+
+        const auth = new AuthService();
+        const result = await auth.requestAdminPasswordReset(user.email);
+        return {
+            success: result.success,
+            message: result.success
+                ? `Password reset email sent to ${user.email}`
+                : result.message,
+            data: null,
         };
     }
 

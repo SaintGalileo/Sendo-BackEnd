@@ -289,26 +289,140 @@ export class AdminSettingsService {
         return this.getKv<Record<string, any>[]>('subscription_subscribers', []);
     }
 
-    // ── Modules (list only; never invent rows) ──
+    // ── Modules (canonical Sendo verticals) ──
+    private readonly CANONICAL_MODULES = [
+        { id: 1, name: 'Grocery', type: 'Grocery', key: 'grocery' },
+        { id: 2, name: 'Food', type: 'Food', key: 'food' },
+        { id: 3, name: 'Pharmacy', type: 'Pharmacy', key: 'pharmacy' },
+        { id: 4, name: 'Shop', type: 'Shop', key: 'shop' },
+        { id: 5, name: 'Parcel', type: 'Parcel', key: 'parcel' },
+        { id: 6, name: 'Rental', type: 'Rental', key: 'rental' },
+    ] as const;
+
     async getModules() {
-        return this.getKv<{ id: number; name: string; type: string; vendors: number; status: boolean }[]>(
-            'modules',
-            [],
+        const stored = await this.getKv<
+            { id: number; name: string; type: string; vendors: number; status: boolean; key?: string }[]
+        >('modules', []);
+
+        // Vendor counts from merchants by type
+        const { data: merchants } = await supabase.from('merchants').select('type, status');
+        const vendorCount: Record<string, number> = {};
+        for (const m of merchants || []) {
+            const t = String(m.type || '').toLowerCase();
+            let key = 'shop';
+            if (t.includes('grocery')) key = 'grocery';
+            else if (t.includes('food') || t.includes('restaurant')) key = 'food';
+            else if (t.includes('pharmacy')) key = 'pharmacy';
+            else if (t.includes('parcel')) key = 'parcel';
+            else if (t.includes('rental')) key = 'rental';
+            else if (t.includes('shop') || t === 'store') key = 'shop';
+            vendorCount[key] = (vendorCount[key] || 0) + 1;
+        }
+
+        const byType = new Map(
+            (Array.isArray(stored.data) ? stored.data : []).map((m) => [
+                String(m.type || m.key || '').toLowerCase(),
+                m,
+            ]),
         );
+
+        const modules = this.CANONICAL_MODULES.map((mod) => {
+            const existing =
+                byType.get(mod.type.toLowerCase()) ||
+                byType.get(mod.key) ||
+                byType.get(mod.name.toLowerCase());
+            return {
+                id: mod.id,
+                name: mod.name,
+                type: mod.type,
+                key: mod.key,
+                vendors: vendorCount[mod.key] || 0,
+                status: existing ? Boolean(existing.status) : true,
+            };
+        });
+
+        // Persist sync so UI toggles have a baseline
+        await this.putKv('modules', modules);
+        return { success: true as const, data: modules };
     }
 
     async updateModules(modules: unknown) {
         if (!Array.isArray(modules)) {
             return { success: false, message: 'modules must be an array', data: null };
         }
-        const normalized = modules.map((m: any, i: number) => ({
-            id: typeof m.id === 'number' ? m.id : i + 1,
-            name: String(m.name ?? ''),
-            type: String(m.type ?? ''),
-            vendors: Number(m.vendors ?? 0),
-            status: Boolean(m.status),
-        }));
+        const byType = new Map(
+            modules.map((m: any) => [String(m.type || m.key || '').toLowerCase(), m]),
+        );
+        const normalized = this.CANONICAL_MODULES.map((mod) => {
+            const existing =
+                byType.get(mod.type.toLowerCase()) ||
+                byType.get(mod.key) ||
+                byType.get(mod.name.toLowerCase());
+            return {
+                id: mod.id,
+                name: mod.name,
+                type: mod.type,
+                key: mod.key,
+                vendors: Number(existing?.vendors ?? 0),
+                status: existing ? Boolean(existing.status) : true,
+            };
+        });
         return this.putKv('modules', normalized);
+    }
+
+    async getEmailTemplate(templateKey: string) {
+        const defaults: Record<string, { subject: string; body: string }> = {
+            'admin-forgot-password': {
+                subject: 'Reset your admin password',
+                body: `Hi {{name}},\n\nUse this link to reset your password: {{link}}\n\nOr use this token: {{token}}\n\nThis expires in {{expiry_minutes}} minutes.`,
+            },
+            'rental-provider-registration': {
+                subject: 'Rental provider registration',
+                body: `Hi {{name}},\n\nYour rental provider registration was received.`,
+            },
+        };
+        return this.getKv(`email_template.${templateKey}`, defaults[templateKey] || { subject: '', body: '' });
+    }
+
+    async updateEmailTemplate(templateKey: string, body: Record<string, any>) {
+        return this.putKv(`email_template.${templateKey}`, {
+            subject: String(body.subject || ''),
+            body: String(body.body || ''),
+        });
+    }
+
+    // ── Gallery (uploaded media URL index) ──
+    async getGallery() {
+        return this.getKv<{ url: string; name?: string; created_at?: string }[]>('gallery_files', []);
+    }
+
+    async updateGallery(files: unknown) {
+        if (!Array.isArray(files)) {
+            return { success: false, message: 'files must be an array', data: null };
+        }
+        const normalized = files
+            .map((f: any) => ({
+                url: String(f?.url || '').trim(),
+                name: String(f?.name || '').trim() || undefined,
+                created_at: f?.created_at ? String(f.created_at) : new Date().toISOString(),
+            }))
+            .filter((f) => f.url);
+        return this.putKv('gallery_files', normalized);
+    }
+
+    // ── Languages (admin UI locale packs) ──
+    async getLanguages() {
+        return this.getKv(
+            'languages',
+            [{ name: 'English', code: 'en', statusLabel: 'Default', enabled: true }],
+        );
+    }
+
+    async updateLanguages(languages: unknown) {
+        if (!Array.isArray(languages)) {
+            return { success: false, message: 'languages must be an array', data: null };
+        }
+        return this.putKv('languages', languages);
     }
 
     // ── FCM message templates ──

@@ -178,6 +178,40 @@ export class AdminSettingsController {
         return res.status(result.success ? 200 : 400).json(result);
     }
 
+    async getEmailTemplate(req: Request, res: Response) {
+        const key = String(req.params.templateKey || '');
+        if (!key) return res.status(400).json({ success: false, message: 'templateKey required' });
+        const result = await service.getEmailTemplate(key);
+        return res.status(200).json(result);
+    }
+
+    async updateEmailTemplate(req: Request, res: Response) {
+        const key = String(req.params.templateKey || '');
+        if (!key) return res.status(400).json({ success: false, message: 'templateKey required' });
+        const result = await service.updateEmailTemplate(key, req.body ?? {});
+        return res.status(result.success ? 200 : 400).json(result);
+    }
+
+    async getGallery(_req: Request, res: Response) {
+        const result = await service.getGallery();
+        return res.status(200).json(result);
+    }
+
+    async updateGallery(req: Request, res: Response) {
+        const result = await service.updateGallery(req.body?.files ?? req.body);
+        return res.status(result.success ? 200 : 400).json(result);
+    }
+
+    async getLanguages(_req: Request, res: Response) {
+        const result = await service.getLanguages();
+        return res.status(200).json(result);
+    }
+
+    async updateLanguages(req: Request, res: Response) {
+        const result = await service.updateLanguages(req.body?.languages ?? req.body);
+        return res.status(result.success ? 200 : 400).json(result);
+    }
+
     async getWithdrawMethods(_req: Request, res: Response) {
         const result = await service.getWithdrawMethods();
         return res.status(200).json(result);

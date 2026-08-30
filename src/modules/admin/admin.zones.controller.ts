@@ -13,6 +13,11 @@ export class AdminZonesController {
         return res.status(result.success ? 200 : 500).json(result);
     }
 
+    async listLocationZones(_req: Request, res: Response) {
+        const result = await service.listLocationZones();
+        return res.status(result.success ? 200 : 500).json(result);
+    }
+
     async createZone(req: Request, res: Response) {
         const result = await service.createZone(req.body);
         return res.status(result.success ? 201 : 400).json(result);

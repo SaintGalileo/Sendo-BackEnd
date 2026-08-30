@@ -85,13 +85,14 @@ export class AdminUsersController {
     }
 
     async createEmployee(req: Request, res: Response) {
-        const { email, password, first_name, last_name, phone } = req.body || {};
+        const { email, password, first_name, last_name, phone, avatar_url } = req.body || {};
         const result = await service.createEmployee({
             email,
             password,
             first_name,
             last_name,
             phone,
+            avatar_url,
         });
         if (!result.success) {
             const status = result.message?.includes('already exists') ? 409 : 400;
@@ -126,5 +127,10 @@ export class AdminUsersController {
             return res.status(status).json(result);
         }
         return res.json(result);
+    }
+
+    async resetEmployeePassword(req: Request, res: Response) {
+        const result = await service.sendEmployeePasswordReset(req.params.id as string);
+        return res.status(result.success ? 200 : 400).json(result);
     }
 }

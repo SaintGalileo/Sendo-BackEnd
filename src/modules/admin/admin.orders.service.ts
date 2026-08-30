@@ -1,9 +1,14 @@
 import { supabase } from '../../config/supabase';
+import { merchantIdsForScope } from './admin.scope';
 
 export interface OrderFilters {
     status?: string;
     payment_status?: string;
     search?: string;
+    module?: string;
+    city?: string;
+    state?: string;
+    zone?: string;
     page?: number;
     limit?: number;
 }
@@ -14,15 +19,34 @@ export class AdminOrdersService {
         const limit = filters.limit || 20;
         const offset = (page - 1) * limit;
 
+        const merchantIds = await merchantIdsForScope({
+            module: filters.module,
+            city: filters.city,
+            state: filters.state,
+            zone: filters.zone,
+        });
+
+        if (merchantIds && merchantIds.length === 0) {
+            return {
+                success: true,
+                data: [],
+                pagination: { page, limit, total: 0, totalPages: 0 },
+            };
+        }
+
         let query = supabase
             .from('orders')
             .select(`
                 *,
-                merchant:merchants!orders_merchant_id_fkey(id, name, type, logo_url),
+                merchant:merchants!orders_merchant_id_fkey(id, name, type, logo_url, city, state),
                 consumer:users!orders_consumer_id_fkey(id, first_name, last_name, phone, email)
             `, { count: 'exact' })
             .order('created_at', { ascending: false })
             .range(offset, offset + limit - 1);
+
+        if (merchantIds) {
+            query = query.in('merchant_id', merchantIds);
+        }
 
         const paymentStatusValues = new Set([
             'paid',
@@ -77,11 +101,26 @@ export class AdminOrdersService {
         };
     }
 
-    async getCounts() {
-        const { data, error, count } = await supabase
+    async getCounts(filters: Pick<OrderFilters, 'module' | 'city' | 'state' | 'zone'> = {}) {
+        const merchantIds = await merchantIdsForScope(filters);
+
+        if (merchantIds && merchantIds.length === 0) {
+            return {
+                success: true,
+                data: { total: 0, byStatus: {} },
+            };
+        }
+
+        let query = supabase
             .from('orders')
             .select('status, payment_status, payment_method', { count: 'exact' })
             .range(0, 9999);
+
+        if (merchantIds) {
+            query = query.in('merchant_id', merchantIds);
+        }
+
+        const { data, error, count } = await query;
 
         if (error) {
             return { success: false, message: error.message, data: null };
@@ -113,30 +152,37 @@ export class AdminOrdersService {
     }
 
     async getOrder(id: string) {
-        const { data, error } = await supabase
-            .from('orders')
-            .select(`
+        const uuidRe =
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+        const byColumn = uuidRe.test(id) ? 'id' : 'order_number';
+
+        const selectFull = `
                 *,
                 merchant:merchants!orders_merchant_id_fkey(id, name, type, phone, address, logo_url, latitude, longitude),
                 consumer:users!orders_consumer_id_fkey(id, first_name, last_name, phone, email),
                 courier:couriers!orders_courier_id_fkey(id, name, vehicle_type, plate_number, location:courier_locations(lat, lng, updated_at)),
                 order_items(*)
-            `)
-            .eq('id', id)
+            `;
+        const selectLite = `
+                    *,
+                    merchant:merchants!orders_merchant_id_fkey(id, name, type, phone, address, logo_url, latitude, longitude),
+                    consumer:users!orders_consumer_id_fkey(id, first_name, last_name, phone, email),
+                    courier:couriers!orders_courier_id_fkey(id, name, vehicle_type, plate_number),
+                    order_items(*)
+                `;
+
+        const { data, error } = await supabase
+            .from('orders')
+            .select(selectFull)
+            .eq(byColumn, id)
             .single();
 
         if (error) {
             // Fallback without location join if relation is missing
             const fallback = await supabase
                 .from('orders')
-                .select(`
-                    *,
-                    merchant:merchants!orders_merchant_id_fkey(id, name, type, phone, address, logo_url, latitude, longitude),
-                    consumer:users!orders_consumer_id_fkey(id, first_name, last_name, phone, email),
-                    courier:couriers!orders_courier_id_fkey(id, name, vehicle_type, plate_number),
-                    order_items(*)
-                `)
-                .eq('id', id)
+                .select(selectLite)
+                .eq(byColumn, id)
                 .single();
 
             if (fallback.error) {

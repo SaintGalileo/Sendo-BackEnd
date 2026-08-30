@@ -5,19 +5,29 @@ const service = new AdminOrdersService();
 
 export class AdminOrdersController {
     async listOrders(req: Request, res: Response) {
-        const { status, payment_status, search, page, limit } = req.query;
+        const { status, payment_status, search, module, city, state, zone, page, limit } = req.query;
         const result = await service.listOrders({
             status: status as string,
             payment_status: payment_status as string,
             search: search as string,
+            module: module as string,
+            city: city as string,
+            state: state as string,
+            zone: zone as string,
             page: page ? Number(page) : undefined,
             limit: limit ? Number(limit) : undefined,
         });
         return res.status(result.success ? 200 : 500).json(result);
     }
 
-    async getCounts(_req: Request, res: Response) {
-        const result = await service.getCounts();
+    async getCounts(req: Request, res: Response) {
+        const { module, city, state, zone } = req.query;
+        const result = await service.getCounts({
+            module: module as string,
+            city: city as string,
+            state: state as string,
+            zone: zone as string,
+        });
         return res.status(result.success ? 200 : 500).json(result);
     }
 

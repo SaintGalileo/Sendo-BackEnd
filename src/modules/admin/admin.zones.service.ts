@@ -1,4 +1,5 @@
 import { supabase } from '../../config/supabase';
+import { zoneKeyFromCityState } from './moduleMerchantTypes';
 
 export class AdminZonesService {
     async listZones(page = 1, limit = 20) {
@@ -20,6 +21,46 @@ export class AdminZonesService {
             };
         } catch {
             return { success: true, data: [], pagination: { page, limit, total: 0, totalPages: 0 } };
+        }
+    }
+
+    /** Distinct merchant city/state pairs for hybrid zone filtering. */
+    async listLocationZones() {
+        try {
+            const { data, error } = await supabase
+                .from('merchants')
+                .select('city, state')
+                .not('city', 'is', null)
+                .neq('city', '');
+
+            if (error) {
+                return { success: true, data: [{ id: 'all', label: 'All zones', city: null, state: null }] };
+            }
+
+            const seen = new Map<string, { id: string; label: string; city: string; state: string | null }>();
+            for (const row of data || []) {
+                const city = String(row.city || '').trim();
+                if (!city) continue;
+                const state = String(row.state || '').trim() || null;
+                const id = zoneKeyFromCityState(city, state);
+                if (seen.has(id)) continue;
+                const label = state ? `${city}, ${state}` : city;
+                seen.set(id, { id, label, city, state });
+            }
+
+            const locations = Array.from(seen.values()).sort((a, b) =>
+                a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }),
+            );
+
+            return {
+                success: true,
+                data: [
+                    { id: 'all', label: 'All zones', city: null, state: null },
+                    ...locations,
+                ],
+            };
+        } catch {
+            return { success: true, data: [{ id: 'all', label: 'All zones', city: null, state: null }] };
         }
     }
 

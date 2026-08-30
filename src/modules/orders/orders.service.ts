@@ -73,6 +73,23 @@ export class OrdersService {
         }
 
         const merchantId = cartItems[0].product?.merchant_id;
+
+        // Only verified merchants can receive live orders
+        if (merchantId) {
+            const { data: merchant, error: merchantErr } = await supabase
+                .from('merchants')
+                .select('id, status, name')
+                .eq('id', merchantId)
+                .single();
+            if (merchantErr || !merchant) throw new Error('Merchant not found');
+            const st = String(merchant.status || '').toLowerCase();
+            if (st !== 'verified' && st !== 'active' && st !== 'approved') {
+                throw new Error(
+                    'This merchant is not verified yet and cannot receive orders. Please choose another store.',
+                );
+            }
+        }
+
         let subtotal = 0;
 
         const orderItemsData = cartItems.map((item: any) => {

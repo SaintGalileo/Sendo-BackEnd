@@ -43,7 +43,7 @@ export class MerchantOnboardingService {
                     last_name: lastName,
                     name: shopName,
                     type,
-                    status: 'pending',
+                    status: 'unverified',
                     description,
                     phone: contactPhone,
                     contact_email: contactEmail,

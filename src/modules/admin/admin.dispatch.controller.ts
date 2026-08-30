@@ -27,6 +27,11 @@ export class AdminDispatchController {
         return res.status(result.success ? 200 : 500).json(result);
     }
 
+    async getOverviewMap(_req: Request, res: Response) {
+        const result = await service.getOverviewMap();
+        return res.status(result.success ? 200 : 500).json(result);
+    }
+
     async assignCourier(req: Request, res: Response) {
         const { courierId } = req.body || {};
         if (!courierId) {

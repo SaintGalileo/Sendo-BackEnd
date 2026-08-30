@@ -5,7 +5,10 @@ export class StoresService {
     private readonly allowedStoreTypes = ['restaurant', 'grocery', 'pharmacy', 'store'];
 
     async getStores(filters: any, pagination: any) {
-        let query = supabase.from('merchants').select('*', { count: 'exact' });
+        let query = supabase
+            .from('merchants')
+            .select('*', { count: 'exact' })
+            .in('status', ['verified', 'active', 'approved']);
 
         if (filters.type) {
             if (!this.allowedStoreTypes.includes(filters.type)) {

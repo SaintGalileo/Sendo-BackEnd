@@ -13,6 +13,11 @@ export class AdminAttributesController {
         return res.status(result.success ? 200 : 500).json(result);
     }
 
+    async getAttribute(req: Request, res: Response) {
+        const result = await service.getAttribute(req.params.id as string);
+        return res.status(result.success ? 200 : 404).json(result);
+    }
+
     async createAttribute(req: Request, res: Response) {
         const result = await service.createAttribute(req.body);
         return res.status(result.success ? 201 : 400).json(result);

@@ -169,6 +169,22 @@ export class AuthController {
         return res.status(result.success ? 200 : 400).json(result);
     }
 
+    async requestAdminPasswordReset(req: Request, res: Response) {
+        const { email } = req.body || {};
+        const result = await authService.requestAdminPasswordReset(email);
+        return res.status(result.success ? 200 : 400).json(result);
+    }
+
+    async confirmAdminPasswordReset(req: Request, res: Response) {
+        const { email, token, newPassword, password } = req.body || {};
+        const result = await authService.confirmAdminPasswordReset(
+            email,
+            token,
+            newPassword || password,
+        );
+        return res.status(result.success ? 200 : 400).json(result);
+    }
+
     async registerAdmin(req: Request, res: Response) {
         const { firstName, first_name, lastName, last_name, email, password } = req.body || {};
         const result = await authService.registerAdmin(

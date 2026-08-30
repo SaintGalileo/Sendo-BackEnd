@@ -10,18 +10,29 @@ export class AdminFlashSalesController {
         return res.status(result.success ? 200 : 500).json(result);
     }
 
+    async getById(req: Request, res: Response) {
+        const result = await service.getById(req.params.id as string);
+        return res.status(result.success ? 200 : 404).json(result);
+    }
+
     async create(req: Request, res: Response) {
-        const result = await service.create(req.body);
+        const result = await service.create(req.body ?? {});
         return res.status(result.success ? 201 : 400).json(result);
     }
 
     async update(req: Request, res: Response) {
-        const result = await service.update(req.params.id as string, req.body);
+        const result = await service.update(req.params.id as string, req.body ?? {});
         return res.status(result.success ? 200 : 400).json(result);
     }
 
     async delete(req: Request, res: Response) {
         const result = await service.delete(req.params.id as string);
+        return res.status(result.success ? 200 : 400).json(result);
+    }
+
+    async setProducts(req: Request, res: Response) {
+        const productIds = Array.isArray(req.body?.product_ids) ? req.body.product_ids : [];
+        const result = await service.setProducts(req.params.id as string, productIds.map(String));
         return res.status(result.success ? 200 : 400).json(result);
     }
 }

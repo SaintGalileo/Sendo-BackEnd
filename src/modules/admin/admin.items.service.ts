@@ -1,8 +1,13 @@
 import { supabase } from '../../config/supabase';
+import { merchantIdsForScope } from './admin.scope';
 
 export interface ItemFilters {
     search?: string;
     store_id?: string;
+    module?: string;
+    city?: string;
+    state?: string;
+    zone?: string;
     page?: number;
     limit?: number;
 }
@@ -13,17 +18,35 @@ export class AdminItemsService {
         const limit = filters.limit || 20;
         const offset = (page - 1) * limit;
 
+        const merchantIds = await merchantIdsForScope({
+            module: filters.module,
+            city: filters.city,
+            state: filters.state,
+            zone: filters.zone,
+        });
+
+        if (merchantIds && merchantIds.length === 0) {
+            return {
+                success: true,
+                data: [],
+                pagination: { page, limit, total: 0, totalPages: 0 },
+            };
+        }
+
         let query = supabase
             .from('products')
             .select(`
                 *,
-                merchant:merchants!products_merchant_id_fkey(id, name, type, logo_url)
+                merchant:merchants!products_merchant_id_fkey(id, name, type, logo_url, city, state)
             `, { count: 'exact' })
             .order('created_at', { ascending: false })
             .range(offset, offset + limit - 1);
 
         if (filters.store_id) {
             query = query.eq('store_id', filters.store_id);
+        }
+        if (merchantIds) {
+            query = query.in('merchant_id', merchantIds);
         }
         if (filters.search) {
             query = query.or(`name.ilike.%${filters.search}%`);

@@ -5,11 +5,15 @@ const service = new AdminStoresService();
 
 export class AdminStoresController {
     async listStores(req: Request, res: Response) {
-        const { search, type, status, page, limit } = req.query;
+        const { search, type, status, module, city, state, zone, page, limit } = req.query;
         const result = await service.listStores({
             search: search as string,
             type: type as string,
             status: status as string,
+            module: module as string,
+            city: city as string,
+            state: state as string,
+            zone: zone as string,
             page: page ? Number(page) : undefined,
             limit: limit ? Number(limit) : undefined,
         });
@@ -23,9 +27,13 @@ export class AdminStoresController {
     }
 
     async updateStoreStatus(req: Request, res: Response) {
-        const { status } = req.body || {};
+        const { status, reason, rejection_reason } = req.body || {};
         if (!status) return res.status(400).json({ success: false, message: 'Status is required' });
-        const result = await service.updateStoreStatus(req.params.id as string, status);
+        const result = await service.updateStoreStatus(
+            req.params.id as string,
+            status,
+            reason ?? rejection_reason,
+        );
         return res.status(result.success ? 200 : 400).json(result);
     }
 
@@ -43,6 +51,12 @@ export class AdminStoresController {
             address: body.address,
             city: body.city,
             state: body.state,
+            postal_code: body.postal_code,
+            country: body.country,
+            latitude: body.latitude,
+            longitude: body.longitude,
+            logo_url: body.logo_url,
+            banner_url: body.banner_url,
             description: body.description,
         });
         return res.status(result.success ? 201 : 400).json(result);
