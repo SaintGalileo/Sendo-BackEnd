@@ -67,13 +67,13 @@ export class AdminCategoriesService {
             return { success: false, message: 'A reason / change note is required (min 3 characters)' };
         }
 
-        const payload = {
+        const payload: Record<string, unknown> = {
             merchant_id: categoryData.merchant_id || categoryData.store_id || null,
             name: String(categoryData.name || '').trim(),
-            description: categoryData.description ? String(categoryData.description).trim() : null,
-            image_url: categoryData.image_url || null,
-            position: categoryData.position != null ? Number(categoryData.position) : null,
         };
+        if (categoryData.description) {
+            payload.description = String(categoryData.description).trim();
+        }
         if (!payload.name) return { success: false, message: 'Name is required' };
         if (!payload.merchant_id) {
             return { success: false, message: 'Store is required — categories must belong to a merchant' };
@@ -121,8 +121,7 @@ export class AdminCategoriesService {
         if (updates.merchant_id !== undefined || updates.store_id !== undefined) {
             patch.merchant_id = updates.merchant_id || updates.store_id || null;
         }
-        if (updates.image_url !== undefined) patch.image_url = updates.image_url || null;
-        if (updates.position !== undefined) patch.position = Number(updates.position) || null;
+        // image_url / position omitted — not present on production categories table yet
 
         const { data, error } = await supabase
             .from('categories')
