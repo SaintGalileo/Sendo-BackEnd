@@ -1,8 +1,16 @@
+import { createHash } from 'crypto';
+import { createHash } from 'crypto';
 import { supabase } from '../../config/supabase';
 import { SocketService } from '../notifications/socket.service';
 import { OrderStatus } from '../../common/constants/orderStatus';
 
 const socketService = SocketService.getInstance();
+
+/** Stable UUID-shaped id for synthetic "Uncategorized" catalog buckets (not stored in DB). */
+function uncategorizedCategoryId(merchantId: string): string {
+    const hex = createHash('sha1').update(`sendo:uncategorized:${merchantId}`).digest('hex');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
 
 export class MerchantOnboardingService {
     private merchantOrderSelect =
@@ -141,13 +149,50 @@ export class MerchantOnboardingService {
     }
 
     async getCatalog(merchantId: string) {
-        const { data, error } = await supabase
-            .from('categories')
-            .select('*, products(*, extra_groups:product_extra_groups(*, options:product_extra_options(*)))')
-            .eq('merchant_id', merchantId);
+        const [{ data: categories, error: catErr }, { data: allProducts, error: prodErr }] =
+            await Promise.all([
+                supabase
+                    .from('categories')
+                    .select(
+                        '*, products(*, extra_groups:product_extra_groups(*, options:product_extra_options(*)))',
+                    )
+                    .eq('merchant_id', merchantId)
+                    .order('created_at', { ascending: true }),
+                supabase
+                    .from('products')
+                    .select(
+                        '*, extra_groups:product_extra_groups(*, options:product_extra_options(*))',
+                    )
+                    .eq('merchant_id', merchantId)
+                    .order('created_at', { ascending: false }),
+            ]);
 
-        if (error) throw new Error(error.message);
-        return data;
+        if (catErr) throw new Error(catErr.message);
+        if (prodErr) throw new Error(prodErr.message);
+
+        const catalog = [...(categories || [])];
+        const nestedIds = new Set<string>();
+        for (const cat of catalog) {
+            for (const p of (cat as { products?: { id?: string }[] }).products || []) {
+                if (p?.id) nestedIds.add(String(p.id));
+            }
+        }
+
+        // Admin (or bad data) can leave products without a category, or with a
+        // category owned by another merchant — those never nest under catalog
+        // categories and were invisible in the merchant app.
+        const orphans = (allProducts || []).filter((p: { id?: string }) => !nestedIds.has(String(p.id)));
+        if (orphans.length > 0) {
+            catalog.push({
+                id: uncategorizedCategoryId(merchantId),
+                merchant_id: merchantId,
+                name: 'Uncategorized',
+                description: 'Assign these products to a category for the store menu',
+                products: orphans,
+            } as any);
+        }
+
+        return catalog;
     }
 
     async createCategory(merchantId: string, name: string, description?: string) {

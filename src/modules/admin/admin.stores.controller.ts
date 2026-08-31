@@ -28,13 +28,17 @@ export class AdminStoresController {
         return res.json(result);
     }
 
-    async updateStoreStatus(req: Request, res: Response) {
+    async updateStoreStatus(req: AuthRequest, res: Response) {
+        const actor = actorFromRequest(req.user);
+        if (!actor) return res.status(401).json({ success: false, message: 'Unauthorized' });
         const { status, reason, rejection_reason } = req.body || {};
         if (!status) return res.status(400).json({ success: false, message: 'Status is required' });
+        const note = reason ?? rejection_reason;
         const result = await service.updateStoreStatus(
             req.params.id as string,
             status,
-            reason ?? rejection_reason,
+            note,
+            { actor, reason: note || 'Status updated via admin' },
         );
         return res.status(result.success ? 200 : 400).json(result);
     }

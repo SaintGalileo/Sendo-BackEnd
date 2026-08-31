@@ -290,35 +290,62 @@ export class AdminStoresService {
         };
     }
 
-    async updateStoreStatus(id: string, status: string, reason?: string | null) {
+    async updateStoreStatus(
+        id: string,
+        status: string,
+        reason?: string | null,
+        audit?: { actor: AuditActor; reason: string },
+    ) {
         const normalized = String(status || '').trim().toLowerCase();
-        const updates: Record<string, unknown> = { status: normalized };
+
+        const { data: existing, error: getErr } = await supabase
+            .from('merchants')
+            .select('*')
+            .eq('id', id)
+            .single();
+        if (getErr || !existing) {
+            return { success: false, message: getErr?.message || 'Merchant not found', data: null };
+        }
+
+        const updates: Record<string, unknown> = {};
 
         if (normalized === 'verified' || normalized === 'active' || normalized === 'approved') {
-            const { data: existing, error: getErr } = await supabase
-                .from('merchants')
-                .select('*')
-                .eq('id', id)
-                .single();
-            if (getErr || !existing) return { success: false, message: getErr?.message || 'Merchant not found' };
-            const check = isVerificationComplete(existing);
-            if (!check.ok) {
+            if (existing.verified_at) {
+                updates.status = 'verified';
+                updates.verification_rejection_reason = null;
+            } else {
+                const check = isVerificationComplete(existing);
+                if (!check.ok) {
+                    return {
+                        success: false,
+                        message: `Cannot verify — missing: ${check.missing.join(', ')}`,
+                        data: null,
+                    };
+                }
+                updates.status = 'verified';
+                updates.verified_at = new Date().toISOString();
+                updates.verification_rejection_reason = null;
+            }
+        } else if (normalized === 'rejected' || normalized === 'denied') {
+            const why = requireAuditReason(reason);
+            if (!why) {
+                return { success: false, message: 'A decline reason is required (min 3 characters)', data: null };
+            }
+            updates.status = 'rejected';
+            updates.verification_rejection_reason = why;
+        } else if (normalized === 'suspended') {
+            const why = requireAuditReason(reason);
+            if (!why) {
                 return {
                     success: false,
-                    message: `Cannot verify — missing: ${check.missing.join(', ')}`,
+                    message: 'A suspension reason is required (min 3 characters)',
                     data: null,
                 };
             }
-            updates.status = 'verified';
-            updates.verified_at = new Date().toISOString();
-            updates.verification_rejection_reason = null;
-        }
-
-        if (normalized === 'rejected' || normalized === 'denied') {
-            const why = String(reason || '').trim();
-            if (!why) return { success: false, message: 'A decline reason is required', data: null };
-            updates.status = 'rejected';
-            updates.verification_rejection_reason = why;
+            updates.status = 'suspended';
+            updates.is_online = false;
+        } else {
+            updates.status = normalized;
         }
 
         const { data, error } = await supabase
@@ -328,7 +355,27 @@ export class AdminStoresService {
             .select()
             .single();
 
-        if (error) return { success: false, message: error.message };
+        if (error) return { success: false, message: error.message, data: null };
+
+        if (audit?.actor) {
+            const auditReason =
+                normalized === 'suspended' || normalized === 'rejected' || normalized === 'denied'
+                    ? requireAuditReason(reason)
+                    : requireAuditReason(audit.reason) || 'Status updated via admin';
+            if (auditReason) {
+                await writeAuditLog({
+                    action: 'update',
+                    entityType: 'merchant',
+                    entityId: id,
+                    entityLabel: data.name,
+                    reason: auditReason,
+                    before: sanitizeForAudit(existing),
+                    after: sanitizeForAudit(data),
+                    actor: audit.actor,
+                });
+            }
+        }
+
         return { success: true, message: 'Store status updated', data };
     }
 

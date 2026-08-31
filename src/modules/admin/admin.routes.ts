@@ -119,7 +119,7 @@ router.post('/stores', (req, res) => storesCtrl.createStore(req as any, res));
 router.post('/stores/bulk-import', storesCtrl.bulkCreateStores);
 router.get('/stores/:id', storesCtrl.getStore);
 router.put('/stores/:id', (req, res) => storesCtrl.updateStore(req as any, res));
-router.put('/stores/:id/status', storesCtrl.updateStoreStatus);
+router.put('/stores/:id/status', (req, res) => storesCtrl.updateStoreStatus(req as any, res));
 router.delete('/stores/:id', requireSuperAdmin, (req, res) => storesCtrl.deleteStore(req as any, res));
 
 // ── Dispatch ──

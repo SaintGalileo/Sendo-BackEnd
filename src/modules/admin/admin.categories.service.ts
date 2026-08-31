@@ -75,6 +75,9 @@ export class AdminCategoriesService {
             position: categoryData.position != null ? Number(categoryData.position) : null,
         };
         if (!payload.name) return { success: false, message: 'Name is required' };
+        if (!payload.merchant_id) {
+            return { success: false, message: 'Store is required — categories must belong to a merchant' };
+        }
 
         const { data, error } = await supabase
             .from('categories')

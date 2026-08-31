@@ -101,6 +101,23 @@ export class AdminItemsService {
         return { success: true, data };
     }
 
+    private async assertCategoryBelongsToMerchant(categoryId: string, merchantId: string) {
+        const { data, error } = await supabase
+            .from('categories')
+            .select('id, merchant_id, name')
+            .eq('id', categoryId)
+            .maybeSingle();
+        if (error) return { ok: false as const, message: error.message };
+        if (!data) return { ok: false as const, message: 'Category not found' };
+        if (String(data.merchant_id) !== String(merchantId)) {
+            return {
+                ok: false as const,
+                message: 'Category must belong to the selected store — merchant apps only show products under that store\'s categories',
+            };
+        }
+        return { ok: true as const, category: data };
+    }
+
     async createItem(itemData: Record<string, any>, audit?: { actor: AuditActor; reason: string }) {
         const reason = audit ? requireAuditReason(audit.reason) : 'Product created via admin';
         if (audit && !requireAuditReason(audit.reason)) {
@@ -112,6 +129,16 @@ export class AdminItemsService {
         const merchantId = itemData.merchant_id || itemData.store_id;
         if (!merchantId) return { success: false, message: 'Store is required' };
 
+        const categoryId = itemData.category_id ? String(itemData.category_id).trim() : '';
+        if (!categoryId) {
+            return {
+                success: false,
+                message: 'Category is required — without it the product will not appear in the merchant app catalog',
+            };
+        }
+        const catCheck = await this.assertCategoryBelongsToMerchant(categoryId, merchantId);
+        if (!catCheck.ok) return { success: false, message: catCheck.message };
+
         const images = Array.isArray(itemData.images)
             ? itemData.images.map(String).filter(Boolean)
             : [];
@@ -121,7 +148,7 @@ export class AdminItemsService {
         const payload: Record<string, unknown> = {
             name,
             merchant_id: merchantId,
-            category_id: itemData.category_id || null,
+            category_id: categoryId,
             price: Number(itemData.price) || 0,
             description: itemData.description ? String(itemData.description).trim() : null,
             is_available: itemData.is_available !== false,
@@ -170,7 +197,16 @@ export class AdminItemsService {
         if (updates.merchant_id !== undefined || updates.store_id !== undefined) {
             patch.merchant_id = updates.merchant_id || updates.store_id;
         }
-        if (updates.category_id !== undefined) patch.category_id = updates.category_id || null;
+        if (updates.category_id !== undefined) {
+            const categoryId = updates.category_id ? String(updates.category_id).trim() : '';
+            if (!categoryId) {
+                return {
+                    success: false,
+                    message: 'Category is required — without it the product will not appear in the merchant app catalog',
+                };
+            }
+            patch.category_id = categoryId;
+        }
         if (updates.price !== undefined) patch.price = Number(updates.price) || 0;
         if (updates.description !== undefined) {
             patch.description = updates.description ? String(updates.description).trim() : null;
@@ -194,6 +230,19 @@ export class AdminItemsService {
         if (Object.keys(patch).length === 0) {
             return { success: false, message: 'No fields to update' };
         }
+
+        const nextMerchantId = String(patch.merchant_id || existing.merchant_id);
+        const nextCategoryId = String(
+            patch.category_id !== undefined ? patch.category_id : existing.category_id || '',
+        );
+        if (!nextCategoryId) {
+            return {
+                success: false,
+                message: 'Category is required — assign a category owned by this store before saving',
+            };
+        }
+        const catCheck = await this.assertCategoryBelongsToMerchant(nextCategoryId, nextMerchantId);
+        if (!catCheck.ok) return { success: false, message: catCheck.message };
 
         const { data, error } = await supabase
             .from('products')

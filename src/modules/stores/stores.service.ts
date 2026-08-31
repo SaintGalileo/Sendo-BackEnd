@@ -1,5 +1,11 @@
+import { createHash } from 'crypto';
 import { supabase } from '../../config/supabase';
 import { isMerchantAvailable } from '../../common/utils/helpers';
+
+function uncategorizedCategoryId(merchantId: string): string {
+    const hex = createHash('sha1').update(`sendo:uncategorized:${merchantId}`).digest('hex');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
 
 export class StoresService {
     private readonly allowedStoreTypes = ['restaurant', 'grocery', 'pharmacy', 'store'];
@@ -154,14 +160,47 @@ export class StoresService {
     }
 
     async getStoreMenu(storeId: string) {
-        // Menu usually implies categories and their nested products
-        const { data, error } = await supabase
-            .from('categories')
-            .select('*, products(*, extra_groups:product_extra_groups(*, options:product_extra_options(*)))')
-            .eq('merchant_id', storeId);
+        // Same shape as merchant catalog — include orphans so admin-created
+        // products without a matching category still appear for customers.
+        const [{ data: categories, error: catErr }, { data: allProducts, error: prodErr }] =
+            await Promise.all([
+                supabase
+                    .from('categories')
+                    .select(
+                        '*, products(*, extra_groups:product_extra_groups(*, options:product_extra_options(*)))',
+                    )
+                    .eq('merchant_id', storeId)
+                    .order('created_at', { ascending: true }),
+                supabase
+                    .from('products')
+                    .select(
+                        '*, extra_groups:product_extra_groups(*, options:product_extra_options(*))',
+                    )
+                    .eq('merchant_id', storeId)
+                    .order('created_at', { ascending: false }),
+            ]);
 
-        if (error) throw new Error(error.message);
-        return data;
+        if (catErr) throw new Error(catErr.message);
+        if (prodErr) throw new Error(prodErr.message);
+
+        const menu = [...(categories || [])];
+        const nestedIds = new Set<string>();
+        for (const cat of menu) {
+            for (const p of (cat as { products?: { id?: string }[] }).products || []) {
+                if (p?.id) nestedIds.add(String(p.id));
+            }
+        }
+        const orphans = (allProducts || []).filter((p: { id?: string }) => !nestedIds.has(String(p.id)));
+        if (orphans.length > 0) {
+            menu.push({
+                id: uncategorizedCategoryId(storeId),
+                merchant_id: storeId,
+                name: 'Uncategorized',
+                description: null,
+                products: orphans,
+            } as any);
+        }
+        return menu;
     }
 
     async getStoreCategories(storeId: string) {
