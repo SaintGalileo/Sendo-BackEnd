@@ -6,6 +6,25 @@ import {
     writeAuditLog,
 } from './admin.audit';
 
+/** Production `categories` table: merchant_id, name, description (+ id, timestamps). No images. */
+const CATEGORY_SELECT =
+    'id, merchant_id, name, description, created_at, updated_at';
+
+function pickCategoryWriteFields(input: Record<string, any>): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    if (input.merchant_id !== undefined || input.store_id !== undefined) {
+        out.merchant_id = input.merchant_id || input.store_id || null;
+    }
+    if (input.name !== undefined) {
+        out.name = String(input.name || '').trim();
+    }
+    if (input.description !== undefined) {
+        const desc = input.description;
+        out.description = desc == null || desc === '' ? null : String(desc).trim();
+    }
+    return out;
+}
+
 export class AdminCategoriesService {
     async listCategories(page = 1, limit = 20, merchantId?: string) {
         const offset = (page - 1) * limit;
@@ -30,7 +49,7 @@ export class AdminCategoriesService {
             // Fallback without join if FK name differs
             let fallback = supabase
                 .from('categories')
-                .select('*', { count: 'exact' })
+                .select(CATEGORY_SELECT, { count: 'exact' })
                 .order('created_at', { ascending: false })
                 .range(offset, offset + limit - 1);
             if (merchantId) fallback = fallback.eq('merchant_id', merchantId);
@@ -56,7 +75,11 @@ export class AdminCategoriesService {
     }
 
     async getCategory(id: string) {
-        const { data, error } = await supabase.from('categories').select('*').eq('id', id).single();
+        const { data, error } = await supabase
+            .from('categories')
+            .select(CATEGORY_SELECT)
+            .eq('id', id)
+            .single();
         if (error) return { success: false, message: error.message, data: null };
         return { success: true, data };
     }
@@ -67,13 +90,7 @@ export class AdminCategoriesService {
             return { success: false, message: 'A reason / change note is required (min 3 characters)' };
         }
 
-        const payload: Record<string, unknown> = {
-            merchant_id: categoryData.merchant_id || categoryData.store_id || null,
-            name: String(categoryData.name || '').trim(),
-        };
-        if (categoryData.description) {
-            payload.description = String(categoryData.description).trim();
-        }
+        const payload = pickCategoryWriteFields(categoryData);
         if (!payload.name) return { success: false, message: 'Name is required' };
         if (!payload.merchant_id) {
             return { success: false, message: 'Store is required — categories must belong to a merchant' };
@@ -82,7 +99,7 @@ export class AdminCategoriesService {
         const { data, error } = await supabase
             .from('categories')
             .insert([payload])
-            .select()
+            .select(CATEGORY_SELECT)
             .single();
 
         if (error) return { success: false, message: error.message };
@@ -110,24 +127,23 @@ export class AdminCategoriesService {
             return { success: false, message: 'A reason / change note is required (min 3 characters)' };
         }
 
-        const { data: existing } = await supabase.from('categories').select('*').eq('id', id).maybeSingle();
+        const { data: existing } = await supabase
+            .from('categories')
+            .select(CATEGORY_SELECT)
+            .eq('id', id)
+            .maybeSingle();
         if (!existing) return { success: false, message: 'Category not found' };
 
-        const patch: Record<string, unknown> = {};
-        if (updates.name !== undefined) patch.name = String(updates.name || '').trim();
-        if (updates.description !== undefined) {
-            patch.description = updates.description ? String(updates.description).trim() : null;
+        const patch = pickCategoryWriteFields(updates);
+        if (Object.keys(patch).length === 0) {
+            return { success: false, message: 'No fields to update' };
         }
-        if (updates.merchant_id !== undefined || updates.store_id !== undefined) {
-            patch.merchant_id = updates.merchant_id || updates.store_id || null;
-        }
-        // image_url / position omitted — not present on production categories table yet
 
         const { data, error } = await supabase
             .from('categories')
             .update(patch)
             .eq('id', id)
-            .select()
+            .select(CATEGORY_SELECT)
             .single();
 
         if (error) return { success: false, message: error.message };
@@ -152,7 +168,11 @@ export class AdminCategoriesService {
             return { success: false, message: 'A reason / change note is required (min 3 characters)' };
         }
 
-        const { data: existing } = await supabase.from('categories').select('*').eq('id', id).maybeSingle();
+        const { data: existing } = await supabase
+            .from('categories')
+            .select(CATEGORY_SELECT)
+            .eq('id', id)
+            .maybeSingle();
         if (!existing) return { success: false, message: 'Category not found' };
 
         const { error } = await supabase.from('categories').delete().eq('id', id);
