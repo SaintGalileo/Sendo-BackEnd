@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../../common/middleware/auth.middleware';
-import { actorFromRequest } from './admin.audit';
+import { requireCudAudit } from './admin.audit';
 import { AdminAuditService, AdminStoreEmployeesService } from './admin.store-employees.service';
 
 const service = new AdminStoreEmployeesService();
@@ -25,26 +25,29 @@ export class AdminStoreEmployeesController {
     }
 
     async create(req: AuthRequest, res: Response) {
-        const actor = actorFromRequest(req.user);
-        if (!actor) return res.status(401).json({ success: false, message: 'Unauthorized' });
-        const reason = req.body?.reason ?? req.body?.change_note;
-        const result = await service.create(req.body || {}, { actor, reason });
+        const audit = requireCudAudit(req.user, req.body);
+        if (!audit.ok) return res.status(audit.status).json({ success: false, message: audit.message });
+        const result = await service.create(req.body || {}, { actor: audit.actor, reason: audit.reason });
         return res.status(result.success ? 201 : 400).json(result);
     }
 
     async update(req: AuthRequest, res: Response) {
-        const actor = actorFromRequest(req.user);
-        if (!actor) return res.status(401).json({ success: false, message: 'Unauthorized' });
-        const reason = req.body?.reason ?? req.body?.change_note;
-        const result = await service.update(req.params.id as string, req.body || {}, { actor, reason });
+        const audit = requireCudAudit(req.user, req.body);
+        if (!audit.ok) return res.status(audit.status).json({ success: false, message: audit.message });
+        const result = await service.update(req.params.id as string, req.body || {}, {
+            actor: audit.actor,
+            reason: audit.reason,
+        });
         return res.status(result.success ? 200 : 400).json(result);
     }
 
     async delete(req: AuthRequest, res: Response) {
-        const actor = actorFromRequest(req.user);
-        if (!actor) return res.status(401).json({ success: false, message: 'Unauthorized' });
-        const reason = req.body?.reason ?? req.body?.change_note;
-        const result = await service.delete(req.params.id as string, { actor, reason });
+        const audit = requireCudAudit(req.user, req.body);
+        if (!audit.ok) return res.status(audit.status).json({ success: false, message: audit.message });
+        const result = await service.delete(req.params.id as string, {
+            actor: audit.actor,
+            reason: audit.reason,
+        });
         return res.status(result.success ? 200 : 400).json(result);
     }
 }

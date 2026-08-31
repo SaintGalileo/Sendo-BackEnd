@@ -18,15 +18,44 @@ export type WriteAuditInput = {
     actor: AuditActor;
 };
 
+export const AUDIT_REASON_MIN_LENGTH = 3;
+
 export function requireAuditReason(reason: unknown): string | null {
     const text = String(reason ?? '').trim();
-    if (text.length < 3) return null;
+    if (text.length < AUDIT_REASON_MIN_LENGTH) return null;
     return text;
+}
+
+export function auditReasonFromBody(body: unknown): string | null {
+    const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+    return requireAuditReason(b.reason ?? b.change_note);
 }
 
 export function actorFromRequest(user: { id?: string; email?: string | null } | undefined | null): AuditActor | null {
     if (!user?.id) return null;
     return { id: String(user.id), email: user.email ?? null };
+}
+
+/** Require authenticated actor + reason/change_note (min 3 chars) for CUD. */
+export function requireCudAudit(
+    user: { id?: string; email?: string | null } | undefined | null,
+    body: unknown,
+):
+    | { ok: true; actor: AuditActor; reason: string }
+    | { ok: false; status: number; message: string } {
+    const actor = actorFromRequest(user);
+    if (!actor) {
+        return { ok: false, status: 401, message: 'Unauthorized' };
+    }
+    const reason = auditReasonFromBody(body);
+    if (!reason) {
+        return {
+            ok: false,
+            status: 400,
+            message: `A reason / change note is required (min ${AUDIT_REASON_MIN_LENGTH} characters)`,
+        };
+    }
+    return { ok: true, actor, reason };
 }
 
 function computeChanges(before: unknown, after: unknown): Record<string, { from: unknown; to: unknown }> | null {
@@ -55,8 +84,20 @@ export async function writeAuditLog(input: WriteAuditInput) {
         return { success: false as const, message: 'Audit actor is required' };
     }
 
+    let actorEmail = input.actor.email ? String(input.actor.email).trim() : '';
+    if (!actorEmail) {
+        const { data: userRow } = await supabase
+            .from('users')
+            .select('email')
+            .eq('id', input.actor.id)
+            .maybeSingle();
+        actorEmail = userRow?.email ? String(userRow.email).trim() : '';
+    }
+
     const changes =
         input.action === 'update' ? computeChanges(input.before, input.after) : null;
+
+    const occurredAt = new Date().toISOString();
 
     const { error } = await supabase.from('admin_audit_logs').insert([
         {
@@ -69,7 +110,8 @@ export async function writeAuditLog(input: WriteAuditInput) {
             after: input.after ?? null,
             changes,
             actor_id: input.actor.id,
-            actor_email: input.actor.email ?? null,
+            actor_email: actorEmail || null,
+            created_at: occurredAt,
         },
     ]);
 
@@ -77,7 +119,7 @@ export async function writeAuditLog(input: WriteAuditInput) {
         console.error('[audit] failed to write log:', error.message);
         return { success: false as const, message: error.message };
     }
-    return { success: true as const };
+    return { success: true as const, created_at: occurredAt };
 }
 
 export async function listAuditLogs(filters: {

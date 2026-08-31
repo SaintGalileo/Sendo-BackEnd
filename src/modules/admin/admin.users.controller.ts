@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../../common/middleware/auth.middleware';
 import { AdminUsersService } from './admin.users.service';
-import { actorFromRequest } from './admin.audit';
+import { requireCudAudit } from './admin.audit';
 
 const service = new AdminUsersService();
 
@@ -26,18 +26,22 @@ export class AdminUsersController {
     }
 
     async updateCustomer(req: AuthRequest, res: Response) {
-        const actor = actorFromRequest(req.user);
-        if (!actor) return res.status(401).json({ success: false, message: 'Unauthorized' });
-        const reason = req.body?.reason ?? req.body?.change_note;
-        const result = await service.updateCustomer(req.params.id as string, req.body || {}, { actor, reason });
+        const audit = requireCudAudit(req.user, req.body);
+        if (!audit.ok) return res.status(audit.status).json({ success: false, message: audit.message });
+        const result = await service.updateCustomer(req.params.id as string, req.body || {}, {
+            actor: audit.actor,
+            reason: audit.reason,
+        });
         return res.status(result.success ? 200 : 400).json(result);
     }
 
     async deleteCustomer(req: AuthRequest, res: Response) {
-        const actor = actorFromRequest(req.user);
-        if (!actor) return res.status(401).json({ success: false, message: 'Unauthorized' });
-        const reason = req.body?.reason ?? req.body?.change_note;
-        const result = await service.deleteCustomer(req.params.id as string, { actor, reason });
+        const audit = requireCudAudit(req.user, req.body);
+        if (!audit.ok) return res.status(audit.status).json({ success: false, message: audit.message });
+        const result = await service.deleteCustomer(req.params.id as string, {
+            actor: audit.actor,
+            reason: audit.reason,
+        });
         return res.status(result.success ? 200 : 400).json(result);
     }
 
@@ -59,18 +63,22 @@ export class AdminUsersController {
     }
 
     async updateCourier(req: AuthRequest, res: Response) {
-        const actor = actorFromRequest(req.user);
-        if (!actor) return res.status(401).json({ success: false, message: 'Unauthorized' });
-        const reason = req.body?.reason ?? req.body?.change_note;
-        const result = await service.updateCourier(req.params.id as string, req.body || {}, { actor, reason });
+        const audit = requireCudAudit(req.user, req.body);
+        if (!audit.ok) return res.status(audit.status).json({ success: false, message: audit.message });
+        const result = await service.updateCourier(req.params.id as string, req.body || {}, {
+            actor: audit.actor,
+            reason: audit.reason,
+        });
         return res.status(result.success ? 200 : 400).json(result);
     }
 
     async deleteCourier(req: AuthRequest, res: Response) {
-        const actor = actorFromRequest(req.user);
-        if (!actor) return res.status(401).json({ success: false, message: 'Unauthorized' });
-        const reason = req.body?.reason ?? req.body?.change_note;
-        const result = await service.deleteCourier(req.params.id as string, { actor, reason });
+        const audit = requireCudAudit(req.user, req.body);
+        if (!audit.ok) return res.status(audit.status).json({ success: false, message: audit.message });
+        const result = await service.deleteCourier(req.params.id as string, {
+            actor: audit.actor,
+            reason: audit.reason,
+        });
         return res.status(result.success ? 200 : 400).json(result);
     }
 
@@ -182,10 +190,12 @@ export class AdminUsersController {
     }
 
     async deleteEmployee(req: AuthRequest, res: Response) {
-        const actor = actorFromRequest(req.user);
-        if (!actor) return res.status(401).json({ success: false, message: 'Unauthorized' });
-        const reason = req.body?.reason ?? req.body?.change_note;
-        const result = await service.deleteEmployee(req.params.id as string, actor.id, { actor, reason });
+        const audit = requireCudAudit(req.user, req.body);
+        if (!audit.ok) return res.status(audit.status).json({ success: false, message: audit.message });
+        const result = await service.deleteEmployee(req.params.id as string, audit.actor.id, {
+            actor: audit.actor,
+            reason: audit.reason,
+        });
         if (!result.success) {
             const status =
                 result.message === 'Employee not found'
