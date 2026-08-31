@@ -5,8 +5,10 @@
 -- Ensure merchant_id is present and points to the merchants table
 -- If the table doesn't have description, let's add it.
 
-ALTER TABLE categories 
-ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE categories
+ADD COLUMN IF NOT EXISTS description TEXT,
+ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
 -- 2. Products Table
 -- Ensure image_url, description, and is_available are present.

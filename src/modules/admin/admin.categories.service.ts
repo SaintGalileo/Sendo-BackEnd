@@ -6,9 +6,8 @@ import {
     writeAuditLog,
 } from './admin.audit';
 
-/** Production `categories` table: merchant_id, name, description (+ id, timestamps). No images. */
-const CATEGORY_SELECT =
-    'id, merchant_id, name, description, created_at, updated_at';
+/** Production `categories` table: merchant_id, name, description (+ id, created_at). No images / updated_at. */
+const CATEGORY_SELECT = 'id, merchant_id, name, description, created_at';
 
 function pickCategoryWriteFields(input: Record<string, any>): Record<string, unknown> {
     const out: Record<string, unknown> = {};
