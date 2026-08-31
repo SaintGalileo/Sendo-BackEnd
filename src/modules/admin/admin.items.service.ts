@@ -1,5 +1,11 @@
 import { supabase } from '../../config/supabase';
 import { merchantIdsForScope } from './admin.scope';
+import {
+    type AuditActor,
+    requireAuditReason,
+    sanitizeForAudit,
+    writeAuditLog,
+} from './admin.audit';
 
 export interface ItemFilters {
     search?: string;
@@ -95,7 +101,11 @@ export class AdminItemsService {
         return { success: true, data };
     }
 
-    async createItem(itemData: Record<string, any>) {
+    async createItem(itemData: Record<string, any>, audit?: { actor: AuditActor; reason: string }) {
+        const reason = audit ? requireAuditReason(audit.reason) : 'Product created via admin';
+        if (audit && !requireAuditReason(audit.reason)) {
+            return { success: false, message: 'A reason / change note is required (min 3 characters)' };
+        }
         const name = String(itemData?.name || '').trim();
         if (!name) return { success: false, message: 'Name is required' };
 
@@ -128,10 +138,29 @@ export class AdminItemsService {
             .single();
 
         if (error) return { success: false, message: error.message };
+        if (audit?.actor) {
+            await writeAuditLog({
+                action: 'create',
+                entityType: 'product',
+                entityId: data.id,
+                entityLabel: data.name,
+                reason: reason!,
+                after: sanitizeForAudit(data),
+                actor: audit.actor,
+            });
+        }
         return { success: true, message: 'Item created', data };
     }
 
-    async updateItem(id: string, updates: Record<string, any>) {
+    async updateItem(id: string, updates: Record<string, any>, audit?: { actor: AuditActor; reason: string }) {
+        const reason = audit ? requireAuditReason(audit.reason) : 'Product updated via admin';
+        if (audit && !requireAuditReason(audit.reason)) {
+            return { success: false, message: 'A reason / change note is required (min 3 characters)' };
+        }
+
+        const { data: existing } = await supabase.from('products').select('*').eq('id', id).maybeSingle();
+        if (!existing) return { success: false, message: 'Item not found' };
+
         const patch: Record<string, unknown> = {};
         if (updates.name !== undefined) {
             const name = String(updates.name || '').trim();
@@ -174,16 +203,47 @@ export class AdminItemsService {
             .single();
 
         if (error) return { success: false, message: error.message };
+        if (audit?.actor) {
+            await writeAuditLog({
+                action: 'update',
+                entityType: 'product',
+                entityId: id,
+                entityLabel: data.name,
+                reason: reason!,
+                before: sanitizeForAudit(existing),
+                after: sanitizeForAudit(data),
+                actor: audit.actor,
+            });
+        }
         return { success: true, message: 'Item updated', data };
     }
 
-    async deleteItem(id: string) {
+    async deleteItem(id: string, audit?: { actor: AuditActor; reason: string }) {
+        const reason = audit ? requireAuditReason(audit.reason) : null;
+        if (audit && !reason) {
+            return { success: false, message: 'A reason / change note is required (min 3 characters)' };
+        }
+
+        const { data: existing } = await supabase.from('products').select('*').eq('id', id).maybeSingle();
+        if (!existing) return { success: false, message: 'Item not found' };
+
         const { error } = await supabase
             .from('products')
             .delete()
             .eq('id', id);
 
         if (error) return { success: false, message: error.message };
+        if (audit?.actor && reason) {
+            await writeAuditLog({
+                action: 'delete',
+                entityType: 'product',
+                entityId: id,
+                entityLabel: existing.name,
+                reason,
+                before: sanitizeForAudit(existing),
+                actor: audit.actor,
+            });
+        }
         return { success: true, message: 'Item deleted' };
     }
 

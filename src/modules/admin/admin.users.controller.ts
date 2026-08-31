@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../../common/middleware/auth.middleware';
 import { AdminUsersService } from './admin.users.service';
+import { actorFromRequest } from './admin.audit';
 
 const service = new AdminUsersService();
 
@@ -24,6 +25,22 @@ export class AdminUsersController {
         return res.json(result);
     }
 
+    async updateCustomer(req: AuthRequest, res: Response) {
+        const actor = actorFromRequest(req.user);
+        if (!actor) return res.status(401).json({ success: false, message: 'Unauthorized' });
+        const reason = req.body?.reason ?? req.body?.change_note;
+        const result = await service.updateCustomer(req.params.id as string, req.body || {}, { actor, reason });
+        return res.status(result.success ? 200 : 400).json(result);
+    }
+
+    async deleteCustomer(req: AuthRequest, res: Response) {
+        const actor = actorFromRequest(req.user);
+        if (!actor) return res.status(401).json({ success: false, message: 'Unauthorized' });
+        const reason = req.body?.reason ?? req.body?.change_note;
+        const result = await service.deleteCustomer(req.params.id as string, { actor, reason });
+        return res.status(result.success ? 200 : 400).json(result);
+    }
+
     async listCouriers(req: Request, res: Response) {
         const { search, page, limit, online } = req.query;
         const result = await service.listCouriers({
@@ -39,6 +56,22 @@ export class AdminUsersController {
         const result = await service.getCourier(req.params.id as string);
         if (!result.success) return res.status(404).json(result);
         return res.json(result);
+    }
+
+    async updateCourier(req: AuthRequest, res: Response) {
+        const actor = actorFromRequest(req.user);
+        if (!actor) return res.status(401).json({ success: false, message: 'Unauthorized' });
+        const reason = req.body?.reason ?? req.body?.change_note;
+        const result = await service.updateCourier(req.params.id as string, req.body || {}, { actor, reason });
+        return res.status(result.success ? 200 : 400).json(result);
+    }
+
+    async deleteCourier(req: AuthRequest, res: Response) {
+        const actor = actorFromRequest(req.user);
+        if (!actor) return res.status(401).json({ success: false, message: 'Unauthorized' });
+        const reason = req.body?.reason ?? req.body?.change_note;
+        const result = await service.deleteCourier(req.params.id as string, { actor, reason });
+        return res.status(result.success ? 200 : 400).json(result);
     }
 
     async createCourier(req: Request, res: Response) {
@@ -92,6 +125,12 @@ export class AdminUsersController {
         return res.status(result.success ? 200 : 500).json(result);
     }
 
+    async getEmployee(req: Request, res: Response) {
+        const result = await service.getEmployee(req.params.id as string);
+        if (!result.success) return res.status(404).json(result);
+        return res.json(result);
+    }
+
     async createEmployee(req: Request, res: Response) {
         const { email, password, first_name, last_name, phone, avatar_url } = req.body || {};
         const result = await service.createEmployee({
@@ -140,5 +179,22 @@ export class AdminUsersController {
     async resetEmployeePassword(req: Request, res: Response) {
         const result = await service.sendEmployeePasswordReset(req.params.id as string);
         return res.status(result.success ? 200 : 400).json(result);
+    }
+
+    async deleteEmployee(req: AuthRequest, res: Response) {
+        const actor = actorFromRequest(req.user);
+        if (!actor) return res.status(401).json({ success: false, message: 'Unauthorized' });
+        const reason = req.body?.reason ?? req.body?.change_note;
+        const result = await service.deleteEmployee(req.params.id as string, actor.id, { actor, reason });
+        if (!result.success) {
+            const status =
+                result.message === 'Employee not found'
+                    ? 404
+                    : result.message?.includes('last remaining') || result.message?.includes('own account')
+                      ? 403
+                      : 400;
+            return res.status(status).json(result);
+        }
+        return res.json(result);
     }
 }

@@ -167,7 +167,7 @@ export class AdminRentalService {
         return { success: true, data: list };
     }
 
-    async createVehicle(body: Record<string, unknown>) {
+    async createVehicle(body: Record<string, unknown>, audit?: { actor: { id: string; email?: string | null }; reason: string }) {
         const name = String(body.name || '').trim();
         if (!name) return { success: false, message: 'Vehicle name is required', data: null };
 
@@ -184,7 +184,201 @@ export class AdminRentalService {
         list.unshift(created);
         const put = await this.putKvList('rental_vehicles', list);
         if (!put.success) return { success: false, message: put.message, data: null };
+        if (audit) {
+            const { writeAuditLog, requireAuditReason, sanitizeForAudit } = await import('./admin.audit');
+            const reason = requireAuditReason(audit.reason) || 'Rental vehicle created via admin';
+            await writeAuditLog({
+                action: 'create',
+                entityType: 'rental_vehicle',
+                entityId: created.id,
+                entityLabel: created.name,
+                reason,
+                after: sanitizeForAudit(created as any),
+                actor: audit.actor,
+            });
+        }
         return { success: true, message: 'Rental vehicle created', data: created };
+    }
+
+    async getProvider(id: string) {
+        const list = await this.getKvList('rental_providers');
+        const row = list.find((r) => String(r.id) === String(id));
+        if (!row) return { success: false, message: 'Provider not found', data: null };
+        return { success: true, data: row };
+    }
+
+    async updateProvider(
+        id: string,
+        body: Record<string, unknown>,
+        audit: { actor: { id: string; email?: string | null }; reason: string },
+    ) {
+        const { writeAuditLog, requireAuditReason, sanitizeForAudit } = await import('./admin.audit');
+        const reason = requireAuditReason(audit.reason);
+        if (!reason) {
+            return { success: false, message: 'A reason / change note is required (min 3 characters)', data: null };
+        }
+        const list = await this.getKvList('rental_providers');
+        const idx = list.findIndex((r) => String(r.id) === String(id));
+        if (idx < 0) return { success: false, message: 'Provider not found', data: null };
+        const before = { ...list[idx] };
+        const updated = {
+            ...list[idx],
+            name: body.name !== undefined ? String(body.name).trim() : list[idx].name,
+            company: body.company !== undefined ? String(body.company || '').trim() || undefined : list[idx].company,
+            email: body.email !== undefined ? String(body.email || '').trim() || undefined : list[idx].email,
+            phone: body.phone !== undefined ? String(body.phone || '').trim() || undefined : list[idx].phone,
+            status: body.status !== undefined ? String(body.status || 'active') : list[idx].status,
+        };
+        list[idx] = updated;
+        const put = await this.putKvList('rental_providers', list);
+        if (!put.success) return { success: false, message: put.message, data: null };
+        await writeAuditLog({
+            action: 'update',
+            entityType: 'rental_provider',
+            entityId: id,
+            entityLabel: String(updated.name || ''),
+            reason,
+            before: sanitizeForAudit(before),
+            after: sanitizeForAudit(updated),
+            actor: audit.actor,
+        });
+        return { success: true, message: 'Provider updated', data: updated };
+    }
+
+    async deleteProvider(
+        id: string,
+        audit: { actor: { id: string; email?: string | null }; reason: string },
+    ) {
+        const { writeAuditLog, requireAuditReason, sanitizeForAudit } = await import('./admin.audit');
+        const reason = requireAuditReason(audit.reason);
+        if (!reason) {
+            return { success: false, message: 'A reason / change note is required (min 3 characters)', data: null };
+        }
+        const list = await this.getKvList('rental_providers');
+        const before = list.find((r) => String(r.id) === String(id));
+        if (!before) return { success: false, message: 'Provider not found', data: null };
+        const next = list.filter((r) => String(r.id) !== String(id));
+        const put = await this.putKvList('rental_providers', next);
+        if (!put.success) return { success: false, message: put.message, data: null };
+        await writeAuditLog({
+            action: 'delete',
+            entityType: 'rental_provider',
+            entityId: id,
+            entityLabel: String(before.name || ''),
+            reason,
+            before: sanitizeForAudit(before),
+            actor: audit.actor,
+        });
+        return { success: true, message: 'Provider deleted', data: null };
+    }
+
+    async getVehicle(id: string) {
+        const list = await this.getKvList('rental_vehicles');
+        const row = list.find((r) => String(r.id) === String(id));
+        if (!row) return { success: false, message: 'Vehicle not found', data: null };
+        return { success: true, data: row };
+    }
+
+    async updateVehicle(
+        id: string,
+        body: Record<string, unknown>,
+        audit: { actor: { id: string; email?: string | null }; reason: string },
+    ) {
+        const { writeAuditLog, requireAuditReason, sanitizeForAudit } = await import('./admin.audit');
+        const reason = requireAuditReason(audit.reason);
+        if (!reason) {
+            return { success: false, message: 'A reason / change note is required (min 3 characters)', data: null };
+        }
+        const list = await this.getKvList('rental_vehicles');
+        const idx = list.findIndex((r) => String(r.id) === String(id));
+        if (idx < 0) return { success: false, message: 'Vehicle not found', data: null };
+        const before = { ...list[idx] };
+        const updated = {
+            ...list[idx],
+            name: body.name !== undefined ? String(body.name).trim() : list[idx].name,
+            provider_id:
+                body.provider_id !== undefined
+                    ? String(body.provider_id || '').trim() || undefined
+                    : list[idx].provider_id,
+            category:
+                body.category !== undefined
+                    ? String(body.category || '').trim() || undefined
+                    : list[idx].category,
+            registration_no:
+                body.registration_no !== undefined
+                    ? String(body.registration_no || '').trim() || undefined
+                    : list[idx].registration_no,
+            status: body.status !== undefined ? String(body.status || 'active') : list[idx].status,
+        };
+        list[idx] = updated;
+        const put = await this.putKvList('rental_vehicles', list);
+        if (!put.success) return { success: false, message: put.message, data: null };
+        await writeAuditLog({
+            action: 'update',
+            entityType: 'rental_vehicle',
+            entityId: id,
+            entityLabel: String(updated.name || ''),
+            reason,
+            before: sanitizeForAudit(before),
+            after: sanitizeForAudit(updated),
+            actor: audit.actor,
+        });
+        return { success: true, message: 'Vehicle updated', data: updated };
+    }
+
+    async deleteVehicle(
+        id: string,
+        audit: { actor: { id: string; email?: string | null }; reason: string },
+    ) {
+        const { writeAuditLog, requireAuditReason, sanitizeForAudit } = await import('./admin.audit');
+        const reason = requireAuditReason(audit.reason);
+        if (!reason) {
+            return { success: false, message: 'A reason / change note is required (min 3 characters)', data: null };
+        }
+        const list = await this.getKvList('rental_vehicles');
+        const before = list.find((r) => String(r.id) === String(id));
+        if (!before) return { success: false, message: 'Vehicle not found', data: null };
+        const next = list.filter((r) => String(r.id) !== String(id));
+        const put = await this.putKvList('rental_vehicles', next);
+        if (!put.success) return { success: false, message: put.message, data: null };
+        await writeAuditLog({
+            action: 'delete',
+            entityType: 'rental_vehicle',
+            entityId: id,
+            entityLabel: String(before.name || ''),
+            reason,
+            before: sanitizeForAudit(before),
+            actor: audit.actor,
+        });
+        return { success: true, message: 'Vehicle deleted', data: null };
+    }
+
+    async listTrips(status?: string) {
+        try {
+            let query = supabase
+                .from('orders')
+                .select('id, status, total_amount, total_price, created_at, consumer_id, merchant_id, trip_type, type, module')
+                .or('type.eq.rental,module.eq.rental')
+                .order('created_at', { ascending: false })
+                .limit(500);
+            const { data, error } = await query;
+            if (error) return { success: false, message: error.message, data: null };
+            const statusOf = (o: { status?: string }) => String(o.status || '').toLowerCase();
+            let rows = data || [];
+            if (status && status !== 'all') {
+                const s = status.toLowerCase();
+                if (s === 'pending') rows = rows.filter((o) => statusOf(o) === 'pending');
+                else if (s === 'ongoing') {
+                    rows = rows.filter((o) =>
+                        ['accepted', 'preparing', 'ready_for_pickup', 'picked_up', 'on_the_way'].includes(statusOf(o)),
+                    );
+                } else if (s === 'completed') rows = rows.filter((o) => statusOf(o) === 'delivered');
+                else if (s === 'cancelled') rows = rows.filter((o) => statusOf(o) === 'cancelled');
+            }
+            return { success: true, data: rows };
+        } catch (e: any) {
+            return { success: false, message: e?.message || 'Failed to list trips', data: null };
+        }
     }
 
     async bulkCreateProviders(rows: Record<string, unknown>[]) {

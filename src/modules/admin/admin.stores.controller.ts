@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import { AdminStoresService } from './admin.stores.service';
+import { AuthRequest } from '../../common/middleware/auth.middleware';
+import { actorFromRequest } from './admin.audit';
 
 const service = new AdminStoresService();
 
@@ -37,28 +39,49 @@ export class AdminStoresController {
         return res.status(result.success ? 200 : 400).json(result);
     }
 
-    async createStore(req: Request, res: Response) {
+    async updateStore(req: AuthRequest, res: Response) {
+        const actor = actorFromRequest(req.user);
+        if (!actor) return res.status(401).json({ success: false, message: 'Unauthorized' });
+        const reason = req.body?.reason ?? req.body?.change_note;
+        const result = await service.updateStore(req.params.id as string, req.body || {}, { actor, reason });
+        return res.status(result.success ? 200 : 400).json(result);
+    }
+
+    async deleteStore(req: AuthRequest, res: Response) {
+        const actor = actorFromRequest(req.user);
+        if (!actor) return res.status(401).json({ success: false, message: 'Unauthorized' });
+        const reason = req.body?.reason ?? req.body?.change_note;
+        const result = await service.deleteStore(req.params.id as string, { actor, reason });
+        return res.status(result.success ? 200 : 400).json(result);
+    }
+
+    async createStore(req: AuthRequest, res: Response) {
         const body = req.body || {};
-        const result = await service.createStore({
-            name: body.name,
-            type: body.type,
-            owner_name: body.owner_name,
-            first_name: body.first_name,
-            last_name: body.last_name,
-            status: body.status,
-            phone: body.phone,
-            email: body.email,
-            address: body.address,
-            city: body.city,
-            state: body.state,
-            postal_code: body.postal_code,
-            country: body.country,
-            latitude: body.latitude,
-            longitude: body.longitude,
-            logo_url: body.logo_url,
-            banner_url: body.banner_url,
-            description: body.description,
-        });
+        const actor = actorFromRequest(req.user);
+        const reason = body.reason ?? body.change_note ?? 'Merchant created via admin';
+        const result = await service.createStore(
+            {
+                name: body.name,
+                type: body.type,
+                owner_name: body.owner_name,
+                first_name: body.first_name,
+                last_name: body.last_name,
+                status: body.status,
+                phone: body.phone,
+                email: body.email,
+                address: body.address,
+                city: body.city,
+                state: body.state,
+                postal_code: body.postal_code,
+                country: body.country,
+                latitude: body.latitude,
+                longitude: body.longitude,
+                logo_url: body.logo_url,
+                banner_url: body.banner_url,
+                description: body.description,
+            },
+            actor ? { actor, reason } : undefined,
+        );
         return res.status(result.success ? 201 : 400).json(result);
     }
 

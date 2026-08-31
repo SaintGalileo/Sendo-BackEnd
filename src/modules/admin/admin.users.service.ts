@@ -2,6 +2,12 @@ import { supabase } from '../../config/supabase';
 import bcrypt from 'bcrypt';
 import { AuthService } from '../auth/auth.service';
 import { normalizeScope, type ScopeFilters } from './admin.scope';
+import {
+    type AuditActor,
+    requireAuditReason,
+    sanitizeForAudit,
+    writeAuditLog,
+} from './admin.audit';
 
 interface ListFilters {
     search?: string;
@@ -172,13 +178,37 @@ export class AdminUsersService {
 
         if (error) return { success: false, message: error.message, data: null };
 
-        // Fetch order count for this customer
-        const { count: orderCount } = await supabase
-            .from('orders')
-            .select('*', { count: 'exact', head: true })
-            .eq('consumer_id', id);
+        // Fetch order count + spend + wallet for this customer
+        const [{ count: orderCount }, ordersRes, walletRes] = await Promise.all([
+            supabase
+                .from('orders')
+                .select('*', { count: 'exact', head: true })
+                .eq('consumer_id', id),
+            supabase
+                .from('orders')
+                .select('total_price, total_amount, status, payment_status')
+                .eq('consumer_id', id)
+                .limit(2000),
+            supabase.from('wallets').select('balance').eq('user_id', id).maybeSingle(),
+        ]);
 
-        return { success: true, data: { ...data, order_count: orderCount || 0 } };
+        const totalOrderAmount = (ordersRes.data || []).reduce((sum: number, o: any) => {
+            const status = String(o.status || '').toLowerCase();
+            if (status === 'cancelled') return sum;
+            return sum + (Number(o.total_price ?? o.total_amount) || 0);
+        }, 0);
+
+        return {
+            success: true,
+            data: {
+                ...data,
+                order_count: orderCount || 0,
+                total_order_amount: totalOrderAmount,
+                wallet_balance: walletRes.data?.balance != null ? Number(walletRes.data.balance) : 0,
+                // Loyalty schema not shipped yet — keep placeholder for UI
+                loyalty_points: 0,
+            },
+        };
     }
 
     private normalizeCourierLocation(row: any) {
@@ -203,7 +233,7 @@ export class AdminUsersService {
             .from('couriers')
             .select(`
                 *,
-                user:users!couriers_user_id_fkey(id, first_name, last_name, phone, email),
+                user:users!couriers_user_id_fkey(id, first_name, last_name, phone, email, avatar_url),
                 location:courier_locations(lat, lng, updated_at)
             `, { count: 'exact' })
             .order('created_at', { ascending: false })
@@ -223,7 +253,7 @@ export class AdminUsersService {
                 .from('couriers')
                 .select(`
                     *,
-                    user:users!couriers_user_id_fkey(id, first_name, last_name, phone, email)
+                    user:users!couriers_user_id_fkey(id, first_name, last_name, phone, email, avatar_url)
                 `, { count: 'exact' })
                 .order('created_at', { ascending: false })
                 .range(offset, offset + limit - 1);
@@ -266,7 +296,7 @@ export class AdminUsersService {
             .from('couriers')
             .select(`
                 *,
-                user:users!couriers_user_id_fkey(id, first_name, last_name, phone, email),
+                user:users!couriers_user_id_fkey(id, first_name, last_name, phone, email, avatar_url),
                 location:courier_locations(lat, lng, updated_at)
             `)
             .eq('id', id)
@@ -277,7 +307,7 @@ export class AdminUsersService {
                 .from('couriers')
                 .select(`
                     *,
-                    user:users!couriers_user_id_fkey(id, first_name, last_name, phone, email)
+                    user:users!couriers_user_id_fkey(id, first_name, last_name, phone, email, avatar_url)
                 `)
                 .eq('id', id)
                 .single();
@@ -549,6 +579,7 @@ export class AdminUsersService {
         first_name?: string | null;
         last_name?: string | null;
         phone?: string | null;
+        avatar_url?: string | null;
         is_admin?: boolean;
         is_super_admin?: boolean;
         created_at?: string;
@@ -559,12 +590,27 @@ export class AdminUsersService {
             first_name: row.first_name || null,
             last_name: row.last_name || null,
             phone: row.phone || null,
+            avatar_url: row.avatar_url || null,
             is_super_admin: Boolean(row.is_super_admin),
             is_admin: Boolean(row.is_admin),
             role: row.is_super_admin ? 'super_admin' : 'admin',
             active: Boolean(row.is_admin),
             created_at: row.created_at,
         };
+    }
+
+    async getEmployee(id: string) {
+        if (!isUuid(id)) return { success: false, message: 'Invalid employee id', data: null };
+        const { data, error } = await supabase
+            .from('users')
+            .select(
+                'id, email, first_name, last_name, phone, avatar_url, is_admin, is_super_admin, role, date_of_birth, created_at',
+            )
+            .eq('id', id)
+            .eq('is_admin', true)
+            .maybeSingle();
+        if (error || !data) return { success: false, message: error?.message || 'Employee not found', data: null };
+        return { success: true, data: this.mapEmployee(data) };
     }
 
     async listEmployees(filters: ListFilters) {
@@ -575,7 +621,7 @@ export class AdminUsersService {
         let query = supabase
             .from('users')
             .select(
-                'id, email, first_name, last_name, phone, is_admin, is_super_admin, role, created_at',
+                'id, email, first_name, last_name, phone, avatar_url, is_admin, is_super_admin, role, created_at',
                 { count: 'exact' }
             )
             .eq('is_admin', true)
@@ -889,5 +935,235 @@ export class AdminUsersService {
 
         if (error) return { success: false, message: error.message, data: null };
         return { success: true, message: 'Courier created', data: this.normalizeCourierLocation(data) };
+    }
+
+    async updateCustomer(
+        id: string,
+        input: Record<string, any>,
+        audit: { actor: AuditActor; reason: string },
+    ) {
+        const reason = requireAuditReason(audit.reason);
+        if (!reason) {
+            return { success: false, message: 'A reason / change note is required (min 3 characters)', data: null };
+        }
+        if (!isUuid(id)) return { success: false, message: 'Invalid customer id', data: null };
+
+        const { data: existing, error: getErr } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', id)
+            .eq('is_admin', false)
+            .single();
+        if (getErr || !existing) {
+            return { success: false, message: getErr?.message || 'Customer not found', data: null };
+        }
+
+        const patch: Record<string, unknown> = {};
+        for (const key of ['first_name', 'last_name', 'full_name', 'phone', 'email', 'avatar_url', 'date_of_birth']) {
+            if (input[key] !== undefined) {
+                const v = input[key];
+                patch[key] = v === null || v === '' ? null : String(v).trim();
+            }
+        }
+
+        if (Object.keys(patch).length === 0) {
+            return { success: false, message: 'No fields to update', data: null };
+        }
+
+        const { data, error } = await supabase.from('users').update(patch).eq('id', id).select('*').single();
+        if (error) return { success: false, message: error.message, data: null };
+
+        await writeAuditLog({
+            action: 'update',
+            entityType: 'customer',
+            entityId: id,
+            entityLabel: [data.first_name, data.last_name].filter(Boolean).join(' ') || data.phone || data.email,
+            reason,
+            before: sanitizeForAudit(existing),
+            after: sanitizeForAudit(data),
+            actor: audit.actor,
+        });
+
+        return { success: true, message: 'Customer updated', data };
+    }
+
+    async deleteCustomer(id: string, audit: { actor: AuditActor; reason: string }) {
+        const reason = requireAuditReason(audit.reason);
+        if (!reason) {
+            return { success: false, message: 'A reason / change note is required (min 3 characters)', data: null };
+        }
+        if (!isUuid(id)) return { success: false, message: 'Invalid customer id', data: null };
+
+        const { data: existing, error: getErr } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', id)
+            .eq('is_admin', false)
+            .single();
+        if (getErr || !existing) {
+            return { success: false, message: getErr?.message || 'Customer not found', data: null };
+        }
+
+        const { error } = await supabase.from('users').delete().eq('id', id);
+        if (error) return { success: false, message: error.message, data: null };
+
+        await writeAuditLog({
+            action: 'delete',
+            entityType: 'customer',
+            entityId: id,
+            entityLabel: [existing.first_name, existing.last_name].filter(Boolean).join(' ') || existing.phone,
+            reason,
+            before: sanitizeForAudit(existing),
+            actor: audit.actor,
+        });
+
+        return { success: true, message: 'Customer deleted', data: null };
+    }
+
+    async updateCourier(
+        id: string,
+        input: Record<string, any>,
+        audit: { actor: AuditActor; reason: string },
+    ) {
+        const reason = requireAuditReason(audit.reason);
+        if (!reason) {
+            return { success: false, message: 'A reason / change note is required (min 3 characters)', data: null };
+        }
+        if (!isUuid(id)) return { success: false, message: 'Invalid courier id', data: null };
+
+        const existingRes = await this.getCourier(id);
+        if (!existingRes.success || !existingRes.data) {
+            return { success: false, message: existingRes.message || 'Courier not found', data: null };
+        }
+        const existing = existingRes.data as any;
+
+        const courierPatch: Record<string, unknown> = {};
+        if (input.name !== undefined) courierPatch.name = String(input.name).trim();
+        if (input.vehicle_type !== undefined) courierPatch.vehicle_type = String(input.vehicle_type).trim();
+        if (input.plate_number !== undefined) {
+            courierPatch.plate_number = String(input.plate_number || '').trim() || null;
+        }
+        if (input.avatar_url !== undefined) courierPatch.avatar_url = input.avatar_url || null;
+        if (input.is_online !== undefined) courierPatch.is_online = Boolean(input.is_online);
+        if (input.date_of_birth !== undefined) courierPatch.date_of_birth = input.date_of_birth || null;
+
+        if (input.first_name !== undefined || input.last_name !== undefined) {
+            const first = input.first_name !== undefined
+                ? String(input.first_name).trim()
+                : existing.user?.first_name || '';
+            const last = input.last_name !== undefined
+                ? String(input.last_name).trim()
+                : existing.user?.last_name || '';
+            courierPatch.name = `${first} ${last}`.trim() || existing.name;
+        }
+
+        if (Object.keys(courierPatch).length > 0) {
+            const { error } = await supabase.from('couriers').update(courierPatch).eq('id', id);
+            if (error) return { success: false, message: error.message, data: null };
+        }
+
+        if (existing.user_id || existing.user?.id) {
+            const userId = existing.user_id || existing.user.id;
+            const userPatch: Record<string, unknown> = {};
+            for (const key of ['first_name', 'last_name', 'phone', 'email', 'avatar_url', 'date_of_birth']) {
+                if (input[key] !== undefined) {
+                    const v = input[key];
+                    userPatch[key] = v === null || v === '' ? null : String(v).trim();
+                }
+            }
+            if (Object.keys(userPatch).length > 0) {
+                await supabase.from('users').update(userPatch).eq('id', userId);
+            }
+        }
+
+        const updated = await this.getCourier(id);
+        await writeAuditLog({
+            action: 'update',
+            entityType: 'courier',
+            entityId: id,
+            entityLabel: (updated.data as any)?.name || existing.name,
+            reason,
+            before: sanitizeForAudit(existing),
+            after: sanitizeForAudit(updated.data as any),
+            actor: audit.actor,
+        });
+
+        return { success: true, message: 'Courier updated', data: updated.data };
+    }
+
+    async deleteCourier(id: string, audit: { actor: AuditActor; reason: string }) {
+        const reason = requireAuditReason(audit.reason);
+        if (!reason) {
+            return { success: false, message: 'A reason / change note is required (min 3 characters)', data: null };
+        }
+        if (!isUuid(id)) return { success: false, message: 'Invalid courier id', data: null };
+
+        const existingRes = await this.getCourier(id);
+        if (!existingRes.success || !existingRes.data) {
+            return { success: false, message: existingRes.message || 'Courier not found', data: null };
+        }
+        const existing = existingRes.data as any;
+
+        const { error } = await supabase.from('couriers').delete().eq('id', id);
+        if (error) return { success: false, message: error.message, data: null };
+
+        await writeAuditLog({
+            action: 'delete',
+            entityType: 'courier',
+            entityId: id,
+            entityLabel: existing.name,
+            reason,
+            before: sanitizeForAudit(existing),
+            actor: audit.actor,
+        });
+
+        return { success: true, message: 'Courier deleted', data: null };
+    }
+
+    async deleteEmployee(id: string, actorId: string, audit: { actor: AuditActor; reason: string }) {
+        const reason = requireAuditReason(audit.reason);
+        if (!reason) {
+            return { success: false, message: 'A reason / change note is required (min 3 characters)', data: null };
+        }
+        if (id === actorId) {
+            return { success: false, message: 'You cannot delete your own account', data: null };
+        }
+
+        const { data: existing, error: findError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', id)
+            .eq('is_admin', true)
+            .maybeSingle();
+
+        if (findError || !existing) {
+            return { success: false, message: 'Employee not found', data: null };
+        }
+
+        if (existing.is_super_admin) {
+            const { count } = await supabase
+                .from('users')
+                .select('id', { count: 'exact', head: true })
+                .eq('is_admin', true)
+                .eq('is_super_admin', true);
+            if ((count || 0) <= 1) {
+                return { success: false, message: 'Cannot delete the last remaining super-admin', data: null };
+            }
+        }
+
+        const { error } = await supabase.from('users').delete().eq('id', id);
+        if (error) return { success: false, message: error.message, data: null };
+
+        await writeAuditLog({
+            action: 'delete',
+            entityType: 'employee',
+            entityId: id,
+            entityLabel: [existing.first_name, existing.last_name].filter(Boolean).join(' ') || existing.email,
+            reason,
+            before: sanitizeForAudit(existing),
+            actor: audit.actor,
+        });
+
+        return { success: true, message: 'Employee deleted', data: null };
     }
 }

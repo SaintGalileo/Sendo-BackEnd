@@ -26,6 +26,10 @@ import { AdminDeliveryController } from './admin.delivery.controller';
 import { AdminParcelController } from './admin.parcel.controller';
 import { AdminRentalController } from './admin.rental.controller';
 import { AdminUploadsController } from './admin.uploads.controller';
+import {
+    AdminAuditController,
+    AdminStoreEmployeesController,
+} from './admin.store-employees.controller';
 
 const router = Router();
 const ordersCtrl = new AdminOrdersController();
@@ -53,6 +57,8 @@ const uploadsCtrl = new AdminUploadsController();
 const deliveryCtrl = new AdminDeliveryController();
 const parcelCtrl = new AdminParcelController();
 const rentalCtrl = new AdminRentalController();
+const storeEmployeesCtrl = new AdminStoreEmployeesController();
+const auditCtrl = new AdminAuditController();
 
 // All admin routes require authentication + admin (or super_admin) role.
 // Super-admins often carry primary role `super_admin` with `roles: ['admin','super_admin']`.
@@ -79,24 +85,42 @@ router.post('/orders/:id/cancel', ordersCtrl.cancelOrder);
 router.get('/users/overview', (req, res) => usersCtrl.getUsersOverview(req, res));
 router.get('/customers', usersCtrl.listCustomers);
 router.get('/customers/:id', usersCtrl.getCustomer);
+router.put('/customers/:id', (req, res) => usersCtrl.updateCustomer(req as any, res));
+router.delete('/customers/:id', requireSuperAdmin, (req, res) => usersCtrl.deleteCustomer(req as any, res));
 router.get('/couriers', usersCtrl.listCouriers);
 router.post('/couriers', usersCtrl.createCourier);
 router.get('/couriers/:id', usersCtrl.getCourier);
+router.put('/couriers/:id', (req, res) => usersCtrl.updateCourier(req as any, res));
+router.delete('/couriers/:id', requireSuperAdmin, (req, res) => usersCtrl.deleteCourier(req as any, res));
 router.get('/merchants', usersCtrl.listMerchants);
 
 // ── Employees: any admin can list; mutations stay super-admin only ──
 router.get('/employees', (req, res) => usersCtrl.listEmployees(req, res));
+router.get('/employees/:id', (req, res) => usersCtrl.getEmployee(req, res));
 router.post('/employees', requireSuperAdmin, (req, res) => usersCtrl.createEmployee(req, res));
 router.put('/employees/:id', requireSuperAdmin, (req, res) => usersCtrl.updateEmployee(req, res));
 router.put('/employees/:id/status', requireSuperAdmin, (req, res) => usersCtrl.updateEmployeeStatus(req as any, res));
 router.post('/employees/:id/reset-password', requireSuperAdmin, (req, res) => usersCtrl.resetEmployeePassword(req, res));
+router.delete('/employees/:id', requireSuperAdmin, (req, res) => usersCtrl.deleteEmployee(req as any, res));
+
+// ── Store employees ──
+router.get('/store-employees', (req, res) => storeEmployeesCtrl.list(req, res));
+router.post('/store-employees', (req, res) => storeEmployeesCtrl.create(req as any, res));
+router.get('/store-employees/:id', (req, res) => storeEmployeesCtrl.get(req, res));
+router.put('/store-employees/:id', (req, res) => storeEmployeesCtrl.update(req as any, res));
+router.delete('/store-employees/:id', requireSuperAdmin, (req, res) => storeEmployeesCtrl.delete(req as any, res));
+
+// ── Audit logs ──
+router.get('/audit-logs', requireSuperAdmin, (req, res) => auditCtrl.list(req, res));
 
 // ── Stores ──
 router.get('/stores', storesCtrl.listStores);
-router.post('/stores', storesCtrl.createStore);
+router.post('/stores', (req, res) => storesCtrl.createStore(req as any, res));
 router.post('/stores/bulk-import', storesCtrl.bulkCreateStores);
 router.get('/stores/:id', storesCtrl.getStore);
+router.put('/stores/:id', (req, res) => storesCtrl.updateStore(req as any, res));
 router.put('/stores/:id/status', storesCtrl.updateStoreStatus);
+router.delete('/stores/:id', requireSuperAdmin, (req, res) => storesCtrl.deleteStore(req as any, res));
 
 // ── Dispatch ──
 router.get('/dispatch/counts', dispatchCtrl.getCounts);
@@ -137,19 +161,20 @@ router.post('/coupons', couponsCtrl.createCoupon);
 router.put('/coupons/:id', couponsCtrl.updateCoupon);
 router.delete('/coupons/:id', couponsCtrl.deleteCoupon);
 
-// ── Items ──
-router.get('/items', itemsCtrl.listItems);
-router.post('/items', itemsCtrl.createItem);
-router.post('/items/bulk-import', itemsCtrl.bulkCreateItems);
-router.get('/items/:id', itemsCtrl.getItem);
-router.put('/items/:id', itemsCtrl.updateItem);
-router.delete('/items/:id', itemsCtrl.deleteItem);
-
 // ── Categories ──
 router.get('/categories', categoriesCtrl.listCategories);
-router.post('/categories', categoriesCtrl.createCategory);
-router.put('/categories/:id', categoriesCtrl.updateCategory);
-router.delete('/categories/:id', categoriesCtrl.deleteCategory);
+router.post('/categories', (req, res) => categoriesCtrl.createCategory(req as any, res));
+router.get('/categories/:id', (req, res) => categoriesCtrl.getCategory(req, res));
+router.put('/categories/:id', (req, res) => categoriesCtrl.updateCategory(req as any, res));
+router.delete('/categories/:id', requireSuperAdmin, (req, res) => categoriesCtrl.deleteCategory(req as any, res));
+
+// ── Items ──
+router.get('/items', itemsCtrl.listItems);
+router.post('/items', (req, res) => itemsCtrl.createItem(req as any, res));
+router.post('/items/bulk-import', itemsCtrl.bulkCreateItems);
+router.get('/items/:id', itemsCtrl.getItem);
+router.put('/items/:id', (req, res) => itemsCtrl.updateItem(req as any, res));
+router.delete('/items/:id', requireSuperAdmin, (req, res) => itemsCtrl.deleteItem(req as any, res));
 
 // ── Attributes ──
 router.get('/attributes', attributesCtrl.listAttributes);
@@ -283,9 +308,16 @@ router.get('/parcel/dashboard', parcelCtrl.getDashboard);
 // ── Rental ──
 router.get('/rental/dashboard', rentalCtrl.getDashboard);
 router.get('/rental/providers', rentalCtrl.listProviders);
-router.post('/rental/providers', rentalCtrl.createProvider);
+router.post('/rental/providers', (req, res) => rentalCtrl.createProvider(req as any, res));
 router.post('/rental/providers/bulk-import', rentalCtrl.bulkCreateProviders);
+router.get('/rental/providers/:id', rentalCtrl.getProvider);
+router.put('/rental/providers/:id', requireSuperAdmin, (req, res) => rentalCtrl.updateProvider(req as any, res));
+router.delete('/rental/providers/:id', requireSuperAdmin, (req, res) => rentalCtrl.deleteProvider(req as any, res));
 router.get('/rental/vehicles', rentalCtrl.listVehicles);
-router.post('/rental/vehicles', rentalCtrl.createVehicle);
+router.post('/rental/vehicles', (req, res) => rentalCtrl.createVehicle(req as any, res));
+router.get('/rental/vehicles/:id', rentalCtrl.getVehicle);
+router.put('/rental/vehicles/:id', requireSuperAdmin, (req, res) => rentalCtrl.updateVehicle(req as any, res));
+router.delete('/rental/vehicles/:id', requireSuperAdmin, (req, res) => rentalCtrl.deleteVehicle(req as any, res));
+router.get('/rental/trips', rentalCtrl.listTrips);
 
 export default router;

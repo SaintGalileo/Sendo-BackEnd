@@ -1,6 +1,12 @@
 import { supabase } from '../../config/supabase';
 import { moduleToMerchantTypes } from './moduleMerchantTypes';
 import { normalizeScope } from './admin.scope';
+import {
+    type AuditActor,
+    requireAuditReason,
+    sanitizeForAudit,
+    writeAuditLog,
+} from './admin.audit';
 
 interface ListFilters {
     search?: string;
@@ -53,7 +59,11 @@ function isVerificationComplete(row: Record<string, any>): { ok: boolean; missin
 }
 
 export class AdminStoresService {
-    async createStore(input: CreateStoreInput) {
+    async createStore(input: CreateStoreInput, audit?: { actor: AuditActor; reason: string }) {
+        const reason = audit ? requireAuditReason(audit.reason) : 'Merchant created via admin';
+        if (audit && !requireAuditReason(audit.reason)) {
+            return { success: false, message: 'A reason / change note is required (min 3 characters)', data: null };
+        }
         const name = (input.name || '').trim();
         const type = (input.type || '').trim().toLowerCase();
         if (!name) return { success: false, message: 'Merchant name is required', data: null };
@@ -165,6 +175,17 @@ export class AdminStoresService {
             .single();
 
         if (error) return { success: false, message: error.message, data: null };
+        if (audit?.actor) {
+            await writeAuditLog({
+                action: 'create',
+                entityType: 'merchant',
+                entityId: data.id,
+                entityLabel: data.name,
+                reason: reason!,
+                after: sanitizeForAudit(data),
+                actor: audit.actor,
+            });
+        }
         return { success: true, message: 'Merchant created', data };
     }
 
@@ -177,7 +198,7 @@ export class AdminStoresService {
             .from('merchants')
             .select(`
                 *,
-                user:users!merchants_user_id_fkey(id, first_name, last_name, phone, email)
+                user:users!merchants_user_id_fkey(id, first_name, last_name, phone, email, avatar_url)
             `, { count: 'exact' })
             .order('created_at', { ascending: false })
             .range(offset, offset + limit - 1);
@@ -309,6 +330,137 @@ export class AdminStoresService {
 
         if (error) return { success: false, message: error.message };
         return { success: true, message: 'Store status updated', data };
+    }
+
+    async updateStore(
+        id: string,
+        updates: Record<string, any>,
+        audit: { actor: AuditActor; reason: string },
+    ) {
+        const reason = requireAuditReason(audit.reason);
+        if (!reason) {
+            return { success: false, message: 'A reason / change note is required (min 3 characters)', data: null };
+        }
+
+        const { data: existing, error: getErr } = await supabase
+            .from('merchants')
+            .select('*')
+            .eq('id', id)
+            .single();
+        if (getErr || !existing) {
+            return { success: false, message: getErr?.message || 'Merchant not found', data: null };
+        }
+
+        const patch: Record<string, unknown> = {};
+        const stringFields = [
+            'name', 'type', 'status', 'first_name', 'last_name', 'phone', 'contact_email',
+            'address', 'city', 'state', 'postal_code', 'country', 'description',
+            'logo_url', 'banner_url', 'opening_time', 'closing_time',
+            'verification_rejection_reason',
+        ] as const;
+        for (const key of stringFields) {
+            if (updates[key] !== undefined) {
+                const v = updates[key];
+                patch[key] = v === null || v === '' ? null : String(v).trim();
+            }
+        }
+        if (updates.email !== undefined && updates.contact_email === undefined) {
+            patch.contact_email = updates.email ? String(updates.email).trim() : null;
+        }
+        if (updates.latitude !== undefined) {
+            const n = Number(updates.latitude);
+            patch.latitude = Number.isFinite(n) ? n : null;
+        }
+        if (updates.longitude !== undefined) {
+            const n = Number(updates.longitude);
+            patch.longitude = Number.isFinite(n) ? n : null;
+        }
+        if (updates.delivery_radius !== undefined) {
+            patch.delivery_radius = Number(updates.delivery_radius) || null;
+        }
+        if (updates.preparation_time !== undefined) {
+            patch.preparation_time = Number(updates.preparation_time) || null;
+        }
+        if (updates.delivery_fee !== undefined) {
+            patch.delivery_fee = Number(updates.delivery_fee) || null;
+        }
+        if (updates.is_pickup_only !== undefined) patch.is_pickup_only = Boolean(updates.is_pickup_only);
+        if (updates.is_online !== undefined) patch.is_online = Boolean(updates.is_online);
+        if (updates.active_days !== undefined) patch.active_days = updates.active_days;
+        if (updates.off_days !== undefined) patch.off_days = updates.off_days;
+        if (typeof patch.type === 'string') {
+            const t = String(patch.type).toLowerCase();
+            if (!ALLOWED_MERCHANT_TYPES.includes(t as (typeof ALLOWED_MERCHANT_TYPES)[number])) {
+                return {
+                    success: false,
+                    message: 'type must be one of: restaurant, grocery, pharmacy, store',
+                    data: null,
+                };
+            }
+            patch.type = t;
+        }
+
+        if (Object.keys(patch).length === 0) {
+            return { success: false, message: 'No fields to update', data: null };
+        }
+
+        patch.updated_at = new Date().toISOString();
+
+        const { data, error } = await supabase
+            .from('merchants')
+            .update(patch)
+            .eq('id', id)
+            .select(`
+                *,
+                user:users!merchants_user_id_fkey(id, first_name, last_name, phone, email, avatar_url)
+            `)
+            .single();
+
+        if (error) return { success: false, message: error.message, data: null };
+
+        await writeAuditLog({
+            action: 'update',
+            entityType: 'merchant',
+            entityId: id,
+            entityLabel: data.name,
+            reason,
+            before: sanitizeForAudit(existing),
+            after: sanitizeForAudit(data),
+            actor: audit.actor,
+        });
+
+        return { success: true, message: 'Merchant updated', data };
+    }
+
+    async deleteStore(id: string, audit: { actor: AuditActor; reason: string }) {
+        const reason = requireAuditReason(audit.reason);
+        if (!reason) {
+            return { success: false, message: 'A reason / change note is required (min 3 characters)', data: null };
+        }
+
+        const { data: existing, error: getErr } = await supabase
+            .from('merchants')
+            .select('*')
+            .eq('id', id)
+            .single();
+        if (getErr || !existing) {
+            return { success: false, message: getErr?.message || 'Merchant not found', data: null };
+        }
+
+        const { error } = await supabase.from('merchants').delete().eq('id', id);
+        if (error) return { success: false, message: error.message, data: null };
+
+        await writeAuditLog({
+            action: 'delete',
+            entityType: 'merchant',
+            entityId: id,
+            entityLabel: existing.name,
+            reason,
+            before: sanitizeForAudit(existing),
+            actor: audit.actor,
+        });
+
+        return { success: true, message: 'Merchant deleted', data: null };
     }
 
     async bulkCreateStores(rows: CreateStoreInput[]) {

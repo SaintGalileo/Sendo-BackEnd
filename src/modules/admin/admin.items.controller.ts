@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import { AdminItemsService } from './admin.items.service';
+import { AuthRequest } from '../../common/middleware/auth.middleware';
+import { actorFromRequest } from './admin.audit';
 
 const service = new AdminItemsService();
 
@@ -25,8 +27,13 @@ export class AdminItemsController {
         return res.json(result);
     }
 
-    async createItem(req: Request, res: Response) {
-        const result = await service.createItem(req.body);
+    async createItem(req: AuthRequest, res: Response) {
+        const actor = actorFromRequest(req.user);
+        const reason = req.body?.reason ?? req.body?.change_note ?? 'Product created via admin';
+        const result = await service.createItem(
+            req.body,
+            actor ? { actor, reason } : undefined,
+        );
         return res.status(result.success ? 201 : 400).json(result);
     }
 
@@ -36,13 +43,22 @@ export class AdminItemsController {
         return res.status(result.success ? 200 : 400).json(result);
     }
 
-    async updateItem(req: Request, res: Response) {
-        const result = await service.updateItem(req.params.id as string, req.body);
+    async updateItem(req: AuthRequest, res: Response) {
+        const actor = actorFromRequest(req.user);
+        const reason = req.body?.reason ?? req.body?.change_note ?? 'Product updated via admin';
+        const result = await service.updateItem(
+            req.params.id as string,
+            req.body,
+            actor ? { actor, reason } : undefined,
+        );
         return res.status(result.success ? 200 : 400).json(result);
     }
 
-    async deleteItem(req: Request, res: Response) {
-        const result = await service.deleteItem(req.params.id as string);
+    async deleteItem(req: AuthRequest, res: Response) {
+        const actor = actorFromRequest(req.user);
+        if (!actor) return res.status(401).json({ success: false, message: 'Unauthorized' });
+        const reason = req.body?.reason ?? req.body?.change_note;
+        const result = await service.deleteItem(req.params.id as string, { actor, reason });
         return res.status(result.success ? 200 : 400).json(result);
     }
 }
