@@ -1,29 +1,36 @@
 # Sendo Backend API Documentation
 
-Welcome to the Sendo Backend API documentation. This API powers the consumer, merchant, and courier applications for a comprehensive food and grocery delivery platform. 
+Technical reference for all API endpoints. Powers the consumer, merchant, courier, and admin apps.
 
-The API follows RESTful principles, uses JSON format for requests and responses, and relies on standard HTTP methods and status codes.
+**Easier starting points (plain language):**
 
----
+- [Docs index — pick a guide](README.md)
+- [Order flow guide](order_system_guide.md) — checkout and live updates
+- [Common API examples](api_usage_guide.md) — search, wallet, support numbers
 
-## Architecture Details
-
-- **Framework:** Express + Node.js with TypeScript
-- **Database Backend:** Supabase (PostgreSQL)
-- **Response Format:** All API requests return a standard structure:
-  ```json
-  {
-      "success": boolean,
-      "message": string,
-      "data": any (optional)
-  }
-  ```
-- **Authentication:** Bearer token (JWT)
-  `Authorization: Bearer <token>`
-- **Roles:** Specific endpoints require specific roles (`consumer`, `merchant`, `courier`). Role verification is managed by `roleMiddleware`.
+**Base URL:** `{your-server}/api` (local default: `http://localhost:3001/api`).
 
 ---
 
+## How responses work
+
+Most calls return JSON like this:
+
+```json
+{
+  "success": true,
+  "message": "Short description",
+  "data": { }
+}
+```
+
+**Logged-in requests** include: `Authorization: Bearer <token from login>`.
+
+**Roles:** Some routes require `consumer`, `merchant`, `courier`, or `admin` — noted in each section below.
+
+**Stack (for developers):** Express + TypeScript, database on Supabase (PostgreSQL).
+
+---
 ## Table of Contents
 
 1. [Authentication](#authentication)
@@ -32,13 +39,15 @@ The API follows RESTful principles, uses JSON format for requests and responses,
 4. [Products](#products)
 5. [Cart](#cart)
 6. [Orders (Consumer)](#orders-consumer)
-7. [Payments](#payments)
-8. [Merchant / Admin](#merchant)
-9. [Courier Endpoints](#courier-endpoints)
-10. [Real-Time Tracking](#real-time-tracking)
-11. [Notifications](#notifications)
-12. [Reviews](#reviews)
-13. [Coupons](#coupons)
+7. [Utility (Public)](#utility-public)
+8. [Payments](#payments)
+9. [Merchant / Admin](#merchant)
+10. [Courier Endpoints](#courier-endpoints)
+11. [Real-Time Tracking](#real-time-tracking)
+12. [Notifications](#notifications)
+13. [Reviews](#reviews)
+14. [Coupons](#coupons)
+15. [Admin Utility](#admin-utility)
 
 ---
 
@@ -185,9 +194,47 @@ Requires Role: `consumer`
 - `POST /api/orders/:orderId/cancel` : Cancel pending/accepted orders.
 - `POST /api/orders/:orderId/rate` : Submit review & rating once delivered.
 - `GET /api/orders/:orderId/tracking` : Fetch current delivery status, including courier live location if dispatched.
+- `GET /api/orders/delivery-fee` : Estimate delivery fee for checkout. Query: `merchantId`, `addressId`. Requires auth (`consumer`). Response `data`:
+  ```json
+  {
+    "fee": 1500,
+    "currency": "NGN",
+    "base_fee": 1000,
+    "surge": {
+      "flat": 200,
+      "percent": 10,
+      "score": 0.8,
+      "reasons": ["heavy_traffic", "harsh_weather"]
+    }
+  }
+  ```
+  Surge uses admin caps from the `utility` table and Google Maps Routes + Weather APIs at quote time. If APIs are unavailable, `surge` values are zero and `fee` equals `base_fee`.
 
 ---
 
+## Utility (Public)
+
+Support phone numbers for customer apps. **No login required.**
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/utility/contacts` | WhatsApp number and call line |
+
+Example response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "whatsapp_number": "+234...",
+    "call_line": "+234..."
+  }
+}
+```
+
+Admins update values in the dashboard: [Utility & contacts operator guide](../../Sendo-v2/docs/operators/11-business-settings.md).
+
+---
 ## Payments
 *Prefix: `/api/payments`*  
 Requires Role: `consumer`
@@ -353,3 +400,32 @@ The API uses `socket.io` for real-time notifications. Clients should connect and
 
 - `GET /api/coupons` : Fetch current global promotions.
 - `POST /api/coupons/apply` : Validate a coupon code attached to a checkout flow. (Role: `consumer`)
+
+---
+
+## Admin Utility
+
+Contact numbers and surge pricing **caps** (used when calculating delivery fees). Called by the admin dashboard; not for customer apps except via public `/api/utility/contacts`.
+
+| Method | Path | Who | Purpose |
+|--------|------|-----|---------|
+| GET | `/api/admin/utility` | Admin | Read all settings |
+| PUT | `/api/admin/utility` | Super-admin | Update settings |
+
+**PUT body** must include `reason` or `change_note` (at least 3 characters) for audit history.
+
+Example:
+
+```json
+{
+  "whatsapp_number": "+234...",
+  "call_line": "+234...",
+  "surge_price": "500",
+  "surge_percentage": "15",
+  "change_note": "Updated support numbers for Lagos launch"
+}
+```
+
+**Surge:** Admin values are maximums. Actual surge per delivery is computed at quote time using Google Maps (traffic and weather). Set `GOOGLE_MAPS_API_KEY` with Distance Matrix, Routes, and Weather APIs enabled.
+
+**Operator guide:** [Business settings — Utility & contacts](../../Sendo-v2/docs/operators/11-business-settings.md)

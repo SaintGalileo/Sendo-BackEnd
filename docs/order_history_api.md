@@ -1,28 +1,33 @@
-# Order History API Documentation
+# Order history
 
-This documentation provides details for the order history endpoint to be implemented in the frontend.
+How to load a customer’s **past orders** in the app (paginated list).
 
-## Fetch Order History
-
-Retrieves a paginated list of orders for the authenticated consumer.
-
-- **URL**: `/orders/history` (or `/orders`)
-- **Method**: `GET`
-- **Authentication**: Required (`Authorization: Bearer <token>`)
-
-### Query Parameters
-
-| Parameter | Type    | Required | Default | Description                   |
-| :-------- | :------ | :------- | :------ | :---------------------------- |
-| `page`    | integer | No       | `1`     | The page number to retrieve.  |
-| `limit`   | integer | No       | `10`    | Number of items per page.     |
-
-### Sample Request
-`GET /orders/history?page=1&limit=5`
+**See also:** [Order flow guide](order_system_guide.md) · [API reference](API_DOCUMENTATION.md) · [All docs](README.md)
 
 ---
 
-### Sample Response
+## What this endpoint does
+
+Returns a page of orders for the logged-in customer, newest first. Each order includes store name, items, totals, and status — enough to build “My orders” cards without extra calls.
+
+---
+
+## Request
+
+**URL:** `GET /api/orders` (or `/api/orders/history` if your client uses that alias)
+
+**Login:** Required — `Authorization: Bearer <customer token>`
+
+| Query | Required | Default | Meaning |
+|-------|----------|---------|---------|
+| `page` | No | `1` | Which page of results |
+| `limit` | No | `10` | Orders per page |
+
+**Example:** `GET /api/orders?page=1&limit=5`
+
+---
+
+## Example response
 
 ```json
 {
@@ -31,10 +36,8 @@ Retrieves a paginated list of orders for the authenticated consumer.
   "data": {
     "items": [
       {
-        "id": "uuid-v4-string",
+        "id": "order-uuid",
         "order_number": "ORD-20240319-X72A",
-        "consumer_id": "user-uuid",
-        "merchant_id": "merchant-uuid",
         "total_price": 5500.00,
         "status": "delivered",
         "payment_method": "wallet",
@@ -48,8 +51,6 @@ Retrieves a paginated list of orders for the authenticated consumer.
         },
         "items": [
           {
-            "id": "item-uuid",
-            "product_id": "product-uuid",
             "quantity": 2,
             "price": 2500.00,
             "product": {
@@ -71,5 +72,10 @@ Retrieves a paginated list of orders for the authenticated consumer.
 }
 ```
 
-> [!NOTE]
-> The `items` array includes full merchant details and item-level details (nested) to make it easy for your AI editor to build the UI cards.
+---
+
+## UI tips
+
+- Use `meta.totalPages` and `meta.currentPage` for “Load more” or page numbers.  
+- Show `merchant.name`, first item image, `total_price`, `status`, and `created_at` on each card.  
+- Tapping a row should open order detail: `GET /api/orders/:orderId` — see [Order status screen guide](order_status_guide.md).

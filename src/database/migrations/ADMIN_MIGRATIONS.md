@@ -1,6 +1,18 @@
-# Admin endpoints — migrations & file map
+# Database setup for admin & API features
+
+**Who this is for:** Developers deploying SENDO-BACKEND on Supabase.
+
+**Plain summary:** Sendo stores data in **Supabase (PostgreSQL)**. SQL files in `supabase/migrations/` create and update tables. Run them on your Supabase project before the admin dashboard and API will work fully.
+
+**Easier guides:** [Backend docs index](../../docs/README.md) · [Backend README](../../README.md)
+
+---
+
+## Quick apply (recommended)
 
 Apply **`202608280001_admin_endpoints_support.sql`** once on Supabase (SQL editor or `supabase db push`). It is idempotent and covers every schema gap for the wired admin create flows.
+
+For **contact numbers and surge pricing**, also apply **`202609010001_utility.sql`** (see [migration list](#migration-files-run-order-if-applying-manually) below).
 
 ## Apply
 
@@ -39,8 +51,9 @@ All five should be non-null.
 | Merchant pending/approve | `merchants.status` | — |
 | Bulk merchants/items | `merchants`, `users`, catalog `items` | — |
 | Units / attributes | `units`, `attributes` | — |
+| Utility (contacts & surge caps) | `utility` | — |
 
-**Env (no migration):** `ALLOW_ADMIN_REGISTRATION=true` to allow admin signup when an admin already exists.
+**Env (no migration):** `ALLOW_ADMIN_REGISTRATION=true` to allow admin signup when an admin already exists. `GOOGLE_MAPS_API_KEY` with Routes + Weather APIs for surge on delivery-fee quotes.
 
 ---
 
@@ -53,8 +66,9 @@ All five should be non-null.
 | 3 | `supabase/migrations/202608200001_admin_settings.sql` | KV table (subset of #5) |
 | 4 | `supabase/migrations/202608230001_attributes_units_coupons.sql` | Units/attributes (subset of #5) |
 | **5** | **`supabase/migrations/202608280001_admin_endpoints_support.sql`** | **All-in-one; supersedes gaps in 1–4** |
+| 6 | `supabase/migrations/202609010001_utility.sql` | Utility table (WhatsApp, call line, surge caps) |
 
-Use **#5 alone** if starting fresh on a DB that already has base Sendo tables (`users`, `couriers`, `merchants`, `items`).
+Use **#5 alone** if starting fresh on a DB that already has base Sendo tables (`users`, `couriers`, `merchants`, `items`). Apply **#6** for public contacts and surge pricing.
 
 ---
 
@@ -72,6 +86,7 @@ Use **#5 alone** if starting fresh on a DB that already has base Sendo tables (`
 | Admin register | `src/modules/auth/auth.routes.ts` | `auth.service.ts` → `registerAdmin` |
 | Units | `admin.routes.ts` | `admin.units.service.ts` |
 | Attributes | `admin.routes.ts` | `admin.attributes.service.ts` |
+| Utility | `admin.routes.ts`, `src/routes/index.ts` (`/utility`) | `utility.service.ts`, `admin.utility.controller.ts` |
 
 ---
 
@@ -89,8 +104,9 @@ Use **#5 alone** if starting fresh on a DB that already has base Sendo tables (`
 | Admin register | `app/api/auth/register/route.ts` | `app/register/RegisterForm.tsx` |
 | Units | `app/api/admin/units/` | `admin/unit/add/`, `edit/` |
 | Attributes | `app/api/admin/attributes/` | `admin/attribute/add/`, `edit/` |
+| Utility | `app/api/admin/utility/route.ts` | `admin/business-settings/utility/` |
 
-Lib helpers: `Sendo-v2/app/lib/backendAdmin/{stores,items,users,settings,transactions,rental}.ts`
+Lib helpers: `Sendo-v2/app/lib/backendAdmin/{stores,items,users,settings,transactions,rental,utility}.ts`
 
 CSV bulk import: `Sendo-v2/app/lib/csvParse.ts`, templates in `Sendo-v2/public/templates/`
 

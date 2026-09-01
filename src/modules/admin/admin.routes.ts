@@ -30,6 +30,7 @@ import {
     AdminAuditController,
     AdminStoreEmployeesController,
 } from './admin.store-employees.controller';
+import { AdminUtilityController } from './admin.utility.controller';
 
 const router = Router();
 const ordersCtrl = new AdminOrdersController();
@@ -59,6 +60,7 @@ const parcelCtrl = new AdminParcelController();
 const rentalCtrl = new AdminRentalController();
 const storeEmployeesCtrl = new AdminStoreEmployeesController();
 const auditCtrl = new AdminAuditController();
+const utilityCtrl = new AdminUtilityController();
 
 // All admin routes require authentication + admin (or super_admin) role.
 // Super-admins often carry primary role `super_admin` with `roles: ['admin','super_admin']`.
@@ -288,6 +290,10 @@ router.get('/settings/gallery', settingsCtrl.getGallery);
 router.put('/settings/gallery', requireSuperAdmin, settingsCtrl.updateGallery);
 router.get('/settings/languages', settingsCtrl.getLanguages);
 router.put('/settings/languages', requireSuperAdmin, settingsCtrl.updateLanguages);
+
+// ── Utility (contacts & surge caps) ──
+router.get('/utility', utilityCtrl.getUtility);
+router.put('/utility', requireSuperAdmin, (req, res) => utilityCtrl.updateUtility(req as any, res));
 
 // ── Zones (read: all admins; mutations: super-admin) ──
 router.get('/zones/locations', zonesCtrl.listLocationZones);

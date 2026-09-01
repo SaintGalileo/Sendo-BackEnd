@@ -6,6 +6,8 @@ import { SocketService } from '../notifications/socket.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { LocationService } from './location.service';
 import { MerchantEarningsService } from '../merchant/earnings.service';
+import { UtilityService } from '../utility/utility.service';
+import { SurgeService } from '../utility/surge.service';
 
 const cartService = new CartService();
 const walletService = new WalletService();
@@ -13,6 +15,8 @@ const socketService = SocketService.getInstance();
 const notificationsService = new NotificationsService();
 const locationService = new LocationService();
 const earningsService = new MerchantEarningsService();
+const utilityService = new UtilityService();
+const surgeService = new SurgeService();
 
 export class OrdersService {
     private merchantNotificationOrderSelect =
@@ -115,7 +119,8 @@ export class OrdersService {
 
         if (addressError || !address) throw new Error('Delivery address not found');
 
-        const deliveryFee = await this.getDeliveryFeeEstimate(merchantId, data.addressId);
+        const deliveryEstimate = await this.getDeliveryFeeEstimate(merchantId, data.addressId);
+        const deliveryFee = deliveryEstimate.fee;
         const totalAmount = subtotal + deliveryFee;
         const paymentMethod = data.paymentMethod || 'wallet';
         // Treat 'online_paid' as fully paid (payment confirmed by user via WebView)
@@ -579,8 +584,7 @@ export class OrdersService {
         return trackingData;
     }
 
-    async getDeliveryFeeEstimate(merchantId: string, addressId: string): Promise<number> {
-        // Fetch Merchant Location
+    async getDeliveryFeeEstimate(merchantId: string, addressId: string) {
         const { data: merchant, error: mError } = await supabase
             .from('merchants')
             .select('latitude, longitude')
@@ -589,7 +593,6 @@ export class OrdersService {
 
         if (mError || !merchant) throw new Error('Merchant location not found');
 
-        // Fetch Address Location
         const { data: address, error: aError } = await supabase
             .from('addresses')
             .select('latitude, longitude')
@@ -600,15 +603,28 @@ export class OrdersService {
 
         if (merchant.latitude === null || merchant.longitude === null ||
             address.latitude === null || address.longitude === null) {
-            // Fallback to a flat fee if coordinates are missing
-            return 500;
+            return {
+                fee: 500,
+                currency: 'NGN',
+                base_fee: 500,
+                surge: { flat: 0, percent: 0, score: 0, reasons: [] as string[] },
+            };
         }
 
-        const distanceKm = await locationService.calculateDistance(
-            { lat: merchant.latitude, lng: merchant.longitude },
-            { lat: address.latitude, lng: address.longitude }
-        );
+        const origin = { lat: merchant.latitude, lng: merchant.longitude };
+        const destination = { lat: address.latitude, lng: address.longitude };
 
-        return locationService.calculateDeliveryFee(distanceKm);
+        const distanceKm = await locationService.calculateDistance(origin, destination);
+        const baseFee = locationService.calculateDeliveryFee(distanceKm);
+        const caps = await utilityService.getSurgeCaps();
+        const surge = await surgeService.computeSurge(origin, destination, caps);
+        const fee = surgeService.applySurge(baseFee, surge);
+
+        return {
+            fee,
+            currency: 'NGN',
+            base_fee: baseFee,
+            surge,
+        };
     }
 }

@@ -1,76 +1,112 @@
-# Order System Guide
+# Order flow guide
 
-This guide describes how to integrate the order system into the Sendo Consumer and Merchant apps.
+How checkout and live order updates work for **customer**, **merchant**, and **courier** apps.
 
-## 1. Consumer Flow (Checkout)
+**See also:** [API reference — Orders](API_DOCUMENTATION.md#orders-consumer) · [Order status screen guide](order_status_guide.md) · [All docs](README.md)
 
-### Step 1: Estimate Delivery Fee
-Before the user places an order, fetch the delivery fee to display it on the checkout page.
+**Base URL:** your server + `/api`.
 
-- **Endpoint**: `GET /orders/delivery-fee`
-- **Query Parameters**:
-  - `merchantId`: UUID of the merchant
-  - `addressId`: UUID of the user's delivery address
-- **Response**:
-  ```json
-  {
-    "status": true,
-    "message": "Delivery fee estimated",
-    "data": {
-      "fee": 700,
-      "currency": "NGN"
+---
+
+## Part 1 — Customer checkout
+
+### Step 1: Show delivery fee before payment
+
+Call this **before** the customer taps “Place order” so they see the full price including delivery.
+
+**Request:** `GET /api/orders/delivery-fee?merchantId=<store id>&addressId=<address id>`
+
+**Login:** Customer token required.
+
+**What you get back:**
+
+| Field | Meaning |
+|-------|---------|
+| `fee` | Total delivery charge the customer pays |
+| `base_fee` | Normal distance-based fee only |
+| `currency` | Usually `NGN` |
+| `surge` | Extra charge from traffic or weather (may be zero) |
+
+Example:
+
+```json
+{
+  "success": true,
+  "message": "Delivery fee estimated",
+  "data": {
+    "fee": 1500,
+    "currency": "NGN",
+    "base_fee": 1000,
+    "surge": {
+      "flat": 200,
+      "percent": 10,
+      "reasons": ["heavy_traffic"]
     }
   }
-  ```
+}
+```
 
-### Step 2: Create Order
-When the user clicks "Place Order", send the order details. The delivery fee will be recalculated and validated on the backend.
+**Surge in plain terms:** Sendo may add a small extra amount when the route has heavy traffic or bad weather. Admins set the **maximum** in the dashboard; the API calculates the actual amount per trip. If mapping services are unavailable, surge is zero and `fee` equals `base_fee`.
 
-- **Endpoint**: `POST /orders`
-- **Body**:
-  ```json
-  {
-    "addressId": "uuid",
-    "notes": "Please don't ring the bell",
-    "paymentMethod": "wallet"
-  }
-  ```
-- **Note**: The items are automatically pulled from the user's active cart.
+The same calculation runs again when the order is created, so the customer is not charged a different amount than shown at checkout.
 
----
+### Step 2: Place the order
 
-## 2. Merchant Flow (Order Management)
+**Request:** `POST /api/orders`
 
-### Step 1: Real-time Notifications
-Merchants must connect to the Socket.io server to receive new orders in real-time.
+**Body example:**
 
-- **Socket Connection**: `wss://your-api-url.com`
-- **Join Room**: Upon connecting, the merchant app must join its specific room.
-  - `socket.emit('join', 'merchant:{merchantId}')`
-- **Listen for New Orders**:
-  - Event: `new_order`
-  - Payload: The complete order object.
+```json
+{
+  "addressId": "customer-address-id",
+  "notes": "Please don't ring the bell",
+  "paymentMethod": "wallet"
+}
+```
 
-### Step 2: Accept or Decline Order
-Merchants can accept or decline an incoming order.
-
-- **Accept Order**: `POST /merchant/orders/:id/accept`
-- **Decline Order**: `POST /merchant/orders/:id/decline`
-  - Body: `{ "reason": "Out of stock" }`
-
-### Step 3: Update Order Status
-As the order progresses, the merchant should update its status.
-
-- **Update Status**: `PUT /merchant/orders/:id/status`
-- **Body**: `{ "status": "preparing" }` (Valid statuses: `preparing`, `ready`, `picked_up`, `on_the_way`, `delivered`)
+Items come from the customer’s **current cart** automatically — you do not send the line items in this call.
 
 ---
 
-## 3. Real-time Status Updates (Consumer)
+## Part 2 — Merchant (store) app
 
-Consumers should listen for status changes to their orders.
+### Hear about new orders immediately
 
-- **Join Room**: `socket.emit('join', 'user:{userId}')`
-- **Listen for Changes**:
-  - Event: `order_status_changed`
-  - Payload: Updated order object.
+Connect to the real-time server (Socket.io) at your API host.
+
+1. Connect to the websocket.  
+2. Join the store room: `merchant:<merchantId>`.  
+3. Listen for event **`new_order`** — payload is the full order (customer, address, items).
+
+### Accept or decline
+
+| Action | Request |
+|--------|---------|
+| Accept | `POST /api/merchant/orders/:id/accept` |
+| Decline | `POST /api/merchant/orders/:id/decline` with body `{ "reason": "Out of stock" }` |
+
+### Update progress (preparing, ready, etc.)
+
+**Request:** `PUT /api/merchant/orders/:id/status`
+
+**Body example:** `{ "status": "preparing" }`
+
+Common statuses: `preparing`, `ready_for_pickup`, `delivered` (exact values depend on your workflow — match the API reference).
+
+---
+
+## Part 3 — Customer live updates
+
+1. Connect to Socket.io.  
+2. Join room: `user:<userId>`.  
+3. Listen for **`order_status_changed`** — update the UI when status changes.
+
+For a map when the courier is on the way, also use `GET /api/orders/:orderId/tracking`. See [Order status screen guide](order_status_guide.md).
+
+---
+
+## Related
+
+- [Order history](order_history_api.md) — past orders list  
+- [Common API examples](api_usage_guide.md) — search, wallet, support numbers  
+- [Operator guide — orders](../../Sendo-v2/docs/operators/02-orders-refunds.md) — how staff use the admin dashboard  

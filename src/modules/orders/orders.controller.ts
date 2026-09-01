@@ -83,8 +83,8 @@ export class OrdersController {
                 return sendResponse(res, 400, false, 'merchantId and addressId are required');
             }
 
-            const fee = await ordersService.getDeliveryFeeEstimate(merchantId as string, addressId as string);
-            return sendResponse(res, 200, true, 'Delivery fee estimated', { fee, currency: 'NGN' });
+            const estimate = await ordersService.getDeliveryFeeEstimate(merchantId as string, addressId as string);
+            return sendResponse(res, 200, true, 'Delivery fee estimated', estimate);
         } catch (error: any) {
             return sendResponse(res, 500, false, error.message);
         }

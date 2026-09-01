@@ -17,6 +17,7 @@ import couponsRoutes from '../modules/coupons/coupons.routes';
 import searchRoutes from '../modules/search/search.routes';
 import { reviewRoutes, storeReviewRoutes, courierReviewRoutes } from '../modules/reviews/reviews.routes';
 import adminRoutes from '../modules/admin/admin.routes';
+import utilityRoutes from '../modules/utility/utility.routes';
 
 const router = Router();
 const paymentsController = new PaymentsController();
@@ -55,6 +56,9 @@ router.use('/notifications', notificationsRoutes);
 
 // Unified Search
 router.use('/search', searchRoutes);
+
+// Public utility (contact numbers)
+router.use('/utility', utilityRoutes);
 
 // Admin Dashboard
 router.use('/admin', adminRoutes);
