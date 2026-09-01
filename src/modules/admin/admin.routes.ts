@@ -296,6 +296,9 @@ router.get('/utility/contacts', utilityCtrl.getContacts);
 router.put('/utility/contacts', requireSuperAdmin, (req, res) => utilityCtrl.updateContacts(req as any, res));
 router.get('/utility/surge-pricing', utilityCtrl.getSurgePricing);
 router.put('/utility/surge-pricing', requireSuperAdmin, (req, res) => utilityCtrl.updateSurgePricing(req as any, res));
+// Legacy combined endpoint (backward compatible)
+router.get('/utility', utilityCtrl.getUtility);
+router.put('/utility', requireSuperAdmin, (req, res) => utilityCtrl.updateUtility(req as any, res));
 
 // ── Zones (read: all admins; mutations: super-admin) ──
 router.get('/zones/locations', zonesCtrl.listLocationZones);
