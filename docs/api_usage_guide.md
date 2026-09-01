@@ -93,9 +93,9 @@ Short, practical examples for features app developers use often. For the full en
 }
 ```
 
-**Who updates these numbers:** Super-admins in the admin dashboard under **Business settings → Utility & contacts**. See the [operator guide](../../Sendo-v2/docs/operators/11-business-settings.md).
+**Who updates these numbers:** Super-admins in the admin dashboard under **Business settings → Contact numbers**.
 
-**Admin API (logged-in super-admin only):** `GET` and `PUT /api/admin/utility` — details in [API reference — Admin Utility](API_DOCUMENTATION.md#admin-utility).
+**Admin API (logged-in super-admin only):** `GET` and `PUT /api/admin/utility/contacts` and `GET` and `PUT /api/admin/utility/surge-pricing` — details in [API reference — Admin Utility](API_DOCUMENTATION.md#admin-utility).
 
 ---
 

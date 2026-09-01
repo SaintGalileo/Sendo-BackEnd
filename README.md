@@ -1,6 +1,8 @@
 # Sendo Backend API
 
-Express + TypeScript API for Sendo: food and grocery delivery, merchants, couriers, orders, payments, and admin settings. Data is stored in **Supabase (PostgreSQL)**.
+Express + TypeScript API for **Sendo** — food and grocery delivery, merchants, couriers, orders, payments, and admin settings. Data is stored in **Supabase (PostgreSQL)**.
+
+The **Sendo admin dashboard** (Sendo-v2) calls this API. Customer and merchant mobile apps use the public and authenticated endpoints documented below.
 
 ---
 
@@ -17,8 +19,6 @@ All guides are written to be readable on GitHub. Start with the **[docs index](d
 | **Common examples** | Search, wallet, public support numbers | [docs/api_usage_guide.md](docs/api_usage_guide.md) |
 | **Order status screen** | Building the “track my order” UI | [docs/order_status_guide.md](docs/order_status_guide.md) |
 | **Database migrations** | DevOps / backend — Supabase schema | [src/database/migrations/ADMIN_MIGRATIONS.md](src/database/migrations/ADMIN_MIGRATIONS.md) |
-
-**Admin operators** use the web dashboard docs in [Sendo-v2/docs/operators](../Sendo-v2/docs/operators/README.md), not this folder.
 
 ---
 
@@ -68,7 +68,38 @@ API root: [http://localhost:3001/api](http://localhost:3001/api)
 
 ---
 
-## Project layout (short)
+## Key features
+
+### Orders & delivery
+
+- Order lifecycle, status updates, and delivery fee quotes
+- **Surge pricing:** extra charge computed at quote time from Google Maps traffic/weather, capped by admin settings
+
+### Utility settings
+
+Stored in the `utility` table (key/value):
+
+| Key | Purpose |
+|-----|---------|
+| `whatsapp_number` | Public support WhatsApp |
+| `call_line` | Public support phone line |
+| `surge_price` | Maximum flat surge add-on (NGN) |
+| `surge_percentage` | Maximum surge percentage (0–100) |
+
+**Public:** `GET /api/utility/contacts` — no auth, for customer apps
+
+**Admin (separate endpoints):**
+
+| Method | Path | Who |
+|--------|------|-----|
+| GET/PUT | `/api/admin/utility/contacts` | Admin read / super-admin write |
+| GET/PUT | `/api/admin/utility/surge-pricing` | Admin read / super-admin write |
+
+All admin writes require `reason` or `change_note` (min 3 characters) and are recorded in `admin_audit_logs`.
+
+---
+
+## Project layout
 
 ```
 SENDO-BACKEND/
@@ -82,7 +113,13 @@ SENDO-BACKEND/
 
 ---
 
-## Related repos in this monorepo
+## Related
 
-- [Sendo-v2](../Sendo-v2/) — admin dashboard that calls this API
-- [Root README](../README.md) — documentation index for the whole repo
+- **Sendo admin dashboard** — separate repo (Sendo-v2) for operator UI
+- **Operator guides** — live in the admin repo under `docs/operators/`
+
+---
+
+## License
+
+Private project. Support and licensing are defined by Sendo.

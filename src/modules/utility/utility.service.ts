@@ -1,7 +1,9 @@
 import { supabase } from '../../config/supabase';
 import { AuditActor, requireAuditReason, writeAuditLog } from '../admin/admin.audit';
 import {
+    CONTACT_KEYS,
     DEFAULT_UTILITY,
+    SURGE_KEYS,
     SurgeCaps,
     UTILITY_KEYS,
     UtilityKey,
@@ -25,6 +27,14 @@ function stripAuditFields(body: Record<string, unknown>): Record<string, unknown
     return copy;
 }
 
+function pickMap(all: UtilityMap, keys: readonly string[]): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const key of keys) {
+        out[key] = all[key as UtilityKey] ?? '';
+    }
+    return out;
+}
+
 export class UtilityService {
     async getAll(): Promise<{ success: true; data: UtilityMap }> {
         try {
@@ -36,7 +46,7 @@ export class UtilityService {
         }
     }
 
-    async getContacts(): Promise<{ success: true; data: { whatsapp_number: string; call_line: string } }> {
+    async getContactsAdmin(): Promise<{ success: true; data: { whatsapp_number: string; call_line: string } }> {
         const all = await this.getAll();
         return {
             success: true,
@@ -47,6 +57,21 @@ export class UtilityService {
         };
     }
 
+    async getSurgeAdmin(): Promise<{ success: true; data: { surge_price: string; surge_percentage: string } }> {
+        const all = await this.getAll();
+        return {
+            success: true,
+            data: {
+                surge_price: all.data.surge_price,
+                surge_percentage: all.data.surge_percentage,
+            },
+        };
+    }
+
+    async getContacts(): Promise<{ success: true; data: { whatsapp_number: string; call_line: string } }> {
+        return this.getContactsAdmin();
+    }
+
     async getSurgeCaps(): Promise<SurgeCaps> {
         const all = await this.getAll();
         const surge_price = Math.max(0, Number(all.data.surge_price) || 0);
@@ -54,10 +79,34 @@ export class UtilityService {
         return { surge_price, surge_percentage };
     }
 
-    async updateMany(
+    async updateContacts(
         body: Record<string, unknown>,
         audit: { actor: AuditActor; reason: string },
-    ): Promise<{ success: boolean; message: string; data: UtilityMap | null }> {
+    ) {
+        return this.updateKeys(body, CONTACT_KEYS, audit, {
+            entityId: 'utility_contacts',
+            entityLabel: 'Contact numbers (WhatsApp & call line)',
+            successMessage: 'Contact numbers updated',
+        });
+    }
+
+    async updateSurgePricing(
+        body: Record<string, unknown>,
+        audit: { actor: AuditActor; reason: string },
+    ) {
+        return this.updateKeys(body, SURGE_KEYS, audit, {
+            entityId: 'utility_surge',
+            entityLabel: 'Surge pricing caps',
+            successMessage: 'Surge pricing updated',
+        });
+    }
+
+    private async updateKeys(
+        body: Record<string, unknown>,
+        allowedKeys: readonly string[],
+        audit: { actor: AuditActor; reason: string },
+        meta: { entityId: string; entityLabel: string; successMessage: string },
+    ): Promise<{ success: boolean; message: string; data: Record<string, string> | null }> {
         const reason = requireAuditReason(audit.reason);
         if (!reason) {
             return {
@@ -67,15 +116,15 @@ export class UtilityService {
             };
         }
 
-        const beforeResult = await this.getAll();
-        const before = beforeResult.data;
+        const beforeAll = (await this.getAll()).data;
+        const before = pickMap(beforeAll, allowedKeys);
 
         const updates = stripAuditFields(body);
-        const allowedKeys = new Set<string>(UTILITY_KEYS);
-        const patchEntries = Object.entries(updates).filter(([key]) => allowedKeys.has(key));
+        const allowed = new Set<string>(allowedKeys);
+        const patchEntries = Object.entries(updates).filter(([key]) => allowed.has(key));
 
         if (patchEntries.length === 0) {
-            return { success: false, message: 'No valid utility fields to update', data: null };
+            return { success: false, message: 'No valid fields to update', data: null };
         }
 
         const now = new Date().toISOString();
@@ -94,23 +143,23 @@ export class UtilityService {
             const { error } = await supabase.from('utility').upsert(rows, { onConflict: 'key' });
             if (error) return { success: false, message: error.message, data: null };
 
-            const afterResult = await this.getAll();
-            const after = afterResult.data;
+            const afterAll = (await this.getAll()).data;
+            const after = pickMap(afterAll, allowedKeys);
 
             await writeAuditLog({
                 action: 'update',
                 entityType: 'utility',
-                entityId: 'utility_settings',
-                entityLabel: 'Utility settings (contacts & surge)',
+                entityId: meta.entityId,
+                entityLabel: meta.entityLabel,
                 reason,
                 before,
                 after,
                 actor: audit.actor,
             });
 
-            return { success: true, message: 'Utility settings updated', data: after };
+            return { success: true, message: meta.successMessage, data: after };
         } catch (e: any) {
-            return { success: false, message: e.message || 'Failed to update utility settings', data: null };
+            return { success: false, message: e.message || 'Failed to update settings', data: null };
         }
     }
 }

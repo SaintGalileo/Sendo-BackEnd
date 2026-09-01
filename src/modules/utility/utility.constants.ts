@@ -1,9 +1,7 @@
-export const UTILITY_KEYS = [
-    'whatsapp_number',
-    'call_line',
-    'surge_price',
-    'surge_percentage',
-] as const;
+export const CONTACT_KEYS = ['whatsapp_number', 'call_line'] as const;
+export const SURGE_KEYS = ['surge_price', 'surge_percentage'] as const;
+
+export const UTILITY_KEYS = [...CONTACT_KEYS, ...SURGE_KEYS] as const;
 
 export type UtilityKey = (typeof UTILITY_KEYS)[number];
 

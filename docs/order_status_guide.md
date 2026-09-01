@@ -86,4 +86,4 @@ For a “Contact support” button, use public numbers (no login):
 
 **`GET /api/utility/contacts`** — see [Common API examples](api_usage_guide.md#3-public-support-phone-numbers).
 
-Numbers are managed in the admin dashboard: [Business settings — Utility & contacts](../../Sendo-v2/docs/operators/11-business-settings.md).
+Numbers are managed in the admin dashboard under **Business settings → Contact numbers**.

@@ -232,7 +232,7 @@ Example response:
 }
 ```
 
-Admins update values in the dashboard: [Utility & contacts operator guide](../../Sendo-v2/docs/operators/11-business-settings.md).
+Admins update values in the admin dashboard under **Business settings → Contact numbers** and **Surge pricing**.
 
 ---
 ## Payments
@@ -405,12 +405,14 @@ The API uses `socket.io` for real-time notifications. Clients should connect and
 
 ## Admin Utility
 
-Contact numbers and surge pricing **caps** (used when calculating delivery fees). Called by the admin dashboard; not for customer apps except via public `/api/utility/contacts`.
+Contact numbers and surge pricing **caps** (used when calculating delivery fees). Called by the admin dashboard; customer apps read contact numbers via public `/api/utility/contacts`.
+
+### Contact numbers
 
 | Method | Path | Who | Purpose |
 |--------|------|-----|---------|
-| GET | `/api/admin/utility` | Admin | Read all settings |
-| PUT | `/api/admin/utility` | Super-admin | Update settings |
+| GET | `/api/admin/utility/contacts` | Admin | Read WhatsApp and call line |
+| PUT | `/api/admin/utility/contacts` | Super-admin | Update contact numbers |
 
 **PUT body** must include `reason` or `change_note` (at least 3 characters) for audit history.
 
@@ -420,12 +422,29 @@ Example:
 {
   "whatsapp_number": "+234...",
   "call_line": "+234...",
+  "change_note": "Updated support numbers for Lagos launch"
+}
+```
+
+### Surge pricing caps
+
+| Method | Path | Who | Purpose |
+|--------|------|-----|---------|
+| GET | `/api/admin/utility/surge-pricing` | Admin | Read surge caps |
+| PUT | `/api/admin/utility/surge-pricing` | Super-admin | Update surge caps |
+
+**PUT body** must include `reason` or `change_note` (at least 3 characters) for audit history.
+
+Example:
+
+```json
+{
   "surge_price": "500",
   "surge_percentage": "15",
-  "change_note": "Updated support numbers for Lagos launch"
+  "change_note": "Raised surge cap for rainy season"
 }
 ```
 
 **Surge:** Admin values are maximums. Actual surge per delivery is computed at quote time using Google Maps (traffic and weather). Set `GOOGLE_MAPS_API_KEY` with Distance Matrix, Routes, and Weather APIs enabled.
 
-**Operator guide:** [Business settings — Utility & contacts](../../Sendo-v2/docs/operators/11-business-settings.md)
+**Operator guide:** Business settings in the Sendo admin dashboard (Contact numbers and Surge pricing pages).

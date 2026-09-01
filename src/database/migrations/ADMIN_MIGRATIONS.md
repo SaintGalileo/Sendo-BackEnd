@@ -104,7 +104,7 @@ Use **#5 alone** if starting fresh on a DB that already has base Sendo tables (`
 | Admin register | `app/api/auth/register/route.ts` | `app/register/RegisterForm.tsx` |
 | Units | `app/api/admin/units/` | `admin/unit/add/`, `edit/` |
 | Attributes | `app/api/admin/attributes/` | `admin/attribute/add/`, `edit/` |
-| Utility | `app/api/admin/utility/route.ts` | `admin/business-settings/utility/` |
+| Utility | `app/api/admin/utility/contacts/`, `app/api/admin/utility/surge-pricing/` | `admin/business-settings/contacts/`, `admin/business-settings/surge-pricing/` |
 
 Lib helpers: `Sendo-v2/app/lib/backendAdmin/{stores,items,users,settings,transactions,rental,utility}.ts`
 
