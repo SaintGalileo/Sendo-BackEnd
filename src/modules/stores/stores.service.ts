@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import { supabase } from '../../config/supabase';
 import { isMerchantAvailable } from '../../common/utils/helpers';
+import { COMMERCIAL_MERCHANT_TYPES } from '../admin/moduleMerchantTypes';
 
 function uncategorizedCategoryId(merchantId: string): string {
     const hex = createHash('sha1').update(`sendo:uncategorized:${merchantId}`).digest('hex');
@@ -8,7 +9,7 @@ function uncategorizedCategoryId(merchantId: string): string {
 }
 
 export class StoresService {
-    private readonly allowedStoreTypes = ['restaurant', 'grocery', 'pharmacy', 'store'];
+    private readonly allowedStoreTypes = COMMERCIAL_MERCHANT_TYPES;
 
     async getStores(filters: any, pagination: any) {
         let query = supabase

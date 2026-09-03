@@ -1,6 +1,6 @@
 import { supabase } from '../../config/supabase';
 
-export type AuditAction = 'create' | 'update' | 'delete';
+export type AuditAction = 'create' | 'update' | 'delete' | 'login' | 'logout';
 
 export type AuditActor = {
     id: string;

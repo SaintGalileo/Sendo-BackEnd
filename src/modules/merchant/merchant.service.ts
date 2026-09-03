@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { supabase } from '../../config/supabase';
 import { SocketService } from '../notifications/socket.service';
 import { OrderStatus } from '../../common/constants/orderStatus';
+import type { MerchantType } from '../admin/moduleMerchantTypes';
 
 const socketService = SocketService.getInstance();
 
@@ -19,7 +20,7 @@ export class MerchantOnboardingService {
         firstName: string,
         lastName: string,
         shopName: string,
-        type: 'restaurant' | 'grocery' | 'pharmacy' | 'store',
+        type: MerchantType,
         description: string,
         contactPhone: string,
         contactEmail: string,
@@ -32,8 +33,8 @@ export class MerchantOnboardingService {
         longitude: number,
         logoUrl: string,
         bannerUrl?: string,
-        openingTime?: string,
-        closingTime?: string,
+        openingTime: string,
+        closingTime: string,
         activeDays: string[] = [],
         offDays?: string[],
         isPickupOnly: boolean = false,
@@ -84,19 +85,60 @@ export class MerchantOnboardingService {
         return { success: true, data };
     }
 
-    async getMerchantByUserId(userId: string) {
+    async listMerchantsByUserId(userId: string) {
         const { data, error } = await supabase
             .from('merchants')
             .select('*')
-            .eq('user_id', userId)
-            .single();
+            .eq('user_id', userId);
 
         if (error) {
-            console.error('Error fetching merchant:', error);
-            return { success: false, message: 'Merchant not found' };
+            console.error('Error fetching merchants:', error);
+            return { success: false, message: 'Merchants not found', data: [] };
         }
 
-        return { success: true, data };
+        return { success: true, data: data || [] };
+    }
+
+    async getMerchantByUserId(userId: string, merchantId?: string) {
+        const { data, error } = await supabase
+            .from('merchants')
+            .select('*')
+            .eq('user_id', userId);
+
+        if (error) {
+            console.error('Error fetching merchant(s):', error);
+            return { success: false, message: 'Merchant not found', data: null, code: 'MERCHANT_NOT_FOUND' };
+        }
+
+        const merchants = data || [];
+        if (merchants.length === 0) {
+            return { success: false, message: 'Merchant not found', data: null, code: 'MERCHANT_NOT_FOUND' };
+        }
+
+        const mId = merchantId ? String(merchantId) : undefined;
+        if (mId) {
+            const match = merchants.find((m: any) => String(m.id) === mId);
+            if (!match) {
+                return {
+                    success: false,
+                    message: 'Merchant not found',
+                    data: null,
+                    code: 'MERCHANT_NOT_FOUND',
+                };
+            }
+            return { success: true, data: match };
+        }
+
+        // Backward compatibility: if only one merchant exists, we can safely infer it.
+        if (merchants.length === 1) return { success: true, data: merchants[0] };
+
+        return {
+            success: false,
+            message: 'Multiple merchants found. merchantId is required for this request.',
+            data: null,
+            code: 'MERCHANT_SELECTION_REQUIRED',
+            merchants,
+        };
     }
 
     async updateStore(merchantId: string, updateData: any) {

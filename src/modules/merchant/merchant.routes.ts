@@ -14,6 +14,7 @@ router.use(authMiddleware);
 router.use(roleMiddleware(['merchant']));
 
 // Store
+router.get('/stores', merchantController.listStores);
 router.get('/store', merchantController.getStore);
 router.put('/store', merchantController.updateStore);
 router.put('/store/status', merchantController.updateStatus);

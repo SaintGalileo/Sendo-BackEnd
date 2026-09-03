@@ -291,12 +291,33 @@ export class AdminSettingsService {
 
     // ── Modules (canonical Sendo verticals) ──
     private readonly CANONICAL_MODULES = [
-        { id: 1, name: 'Grocery', type: 'Grocery', key: 'grocery' },
-        { id: 2, name: 'Food', type: 'Food', key: 'food' },
-        { id: 3, name: 'Pharmacy', type: 'Pharmacy', key: 'pharmacy' },
-        { id: 4, name: 'Shop', type: 'Shop', key: 'shop' },
-        { id: 5, name: 'Parcel', type: 'Parcel', key: 'parcel' },
-        { id: 6, name: 'Rental', type: 'Rental', key: 'rental' },
+        { id: 1, name: 'Supermarket & Groceries', type: 'Supermarket & Groceries', key: 'supermarket_groceries' },
+        { id: 2, name: 'Food & Restaurant', type: 'Food & Restaurant', key: 'food_restaurant' },
+        { id: 3, name: 'Bakery & Confectionery', type: 'Bakery & Confectionery', key: 'bakery_confectionery' },
+        { id: 4, name: 'Pharmacy & Healthcare', type: 'Pharmacy & Healthcare', key: 'pharmacy_healthcare' },
+        { id: 5, name: 'Beauty & Personal Care', type: 'Beauty & Personal Care', key: 'beauty_personal_care' },
+        { id: 6, name: 'Fashion & Clothing', type: 'Fashion & Clothing', key: 'fashion_clothing' },
+        { id: 7, name: 'Shoes & Bags', type: 'Shoes & Bags', key: 'shoes_bags' },
+        { id: 8, name: 'Jewellery & Accessories', type: 'Jewellery & Accessories', key: 'jewellery_accessories' },
+        { id: 9, name: 'Electronics & Gadgets', type: 'Electronics & Gadgets', key: 'electronics_gadgets' },
+        { id: 10, name: 'Phones & Computers', type: 'Phones & Computers', key: 'phones_computers' },
+        { id: 11, name: 'Home & Living', type: 'Home & Living', key: 'home_living' },
+        { id: 12, name: 'Baby & Kids', type: 'Baby & Kids', key: 'baby_kids' },
+        { id: 13, name: 'Sports & Fitness', type: 'Sports & Fitness', key: 'sports_fitness' },
+        { id: 14, name: 'Books & Stationery', type: 'Books & Stationery', key: 'books_stationery' },
+        { id: 15, name: 'Automotive', type: 'Automotive', key: 'automotive' },
+        { id: 16, name: 'Hardware & Building', type: 'Hardware & Building', key: 'hardware_building' },
+        { id: 17, name: 'Agriculture & Farm Supplies', type: 'Agriculture & Farm Supplies', key: 'agriculture_farm_supplies' },
+        { id: 18, name: 'Pet Supplies', type: 'Pet Supplies', key: 'pet_supplies' },
+        { id: 19, name: 'Gifts & Specialty', type: 'Gifts & Specialty', key: 'gifts_speciality' },
+        { id: 20, name: 'Alcohol & Beverages', type: 'Alcohol & Beverages', key: 'alcohol_beverages' },
+        { id: 21, name: 'Office & Business Supplies', type: 'Office & Business Supplies', key: 'office_business_supplies' },
+        { id: 22, name: 'Local & Specialty Products', type: 'Local & Specialty Products', key: 'local_specialty_products' },
+        { id: 23, name: 'Services', type: 'Services', key: 'services' },
+        { id: 24, name: 'Wholesale & Bulk', type: 'Wholesale & Bulk', key: 'wholesale_bulk' },
+        { id: 25, name: 'Other', type: 'Other', key: 'other' },
+        { id: 26, name: 'Parcel', type: 'Parcel', key: 'parcel' },
+        { id: 27, name: 'Rental', type: 'Rental', key: 'rental' },
     ] as const;
 
     async getModules() {
@@ -307,16 +328,48 @@ export class AdminSettingsService {
         // Vendor counts from merchants by type
         const { data: merchants } = await supabase.from('merchants').select('type, status');
         const vendorCount: Record<string, number> = {};
+        const moduleKeySet = new Set(this.CANONICAL_MODULES.map((m) => m.key));
         for (const m of merchants || []) {
             const t = String(m.type || '').toLowerCase();
-            let key = 'shop';
-            if (t.includes('grocery')) key = 'grocery';
-            else if (t.includes('food') || t.includes('restaurant')) key = 'food';
-            else if (t.includes('pharmacy')) key = 'pharmacy';
-            else if (t.includes('parcel')) key = 'parcel';
-            else if (t.includes('rental')) key = 'rental';
-            else if (t.includes('shop') || t === 'store') key = 'shop';
-            vendorCount[key] = (vendorCount[key] || 0) + 1;
+
+            // 1) Keep `parcel`/`rental` as their own special modules.
+            if (t.includes('parcel')) {
+                vendorCount['parcel'] = (vendorCount['parcel'] || 0) + 1;
+                continue;
+            }
+            if (t.includes('rental')) {
+                vendorCount['rental'] = (vendorCount['rental'] || 0) + 1;
+                continue;
+            }
+
+            // 2) Map legacy merchant.type values to the new canonical categories.
+            //    (Pre-migration safety: once the DB migration runs, merchants.type will already
+            //    use these canonical keys directly.)
+            if (t.includes('grocery')) {
+                vendorCount['supermarket_groceries'] = (vendorCount['supermarket_groceries'] || 0) + 1;
+                continue;
+            }
+            if (t.includes('food') || t.includes('restaurant')) {
+                vendorCount['food_restaurant'] = (vendorCount['food_restaurant'] || 0) + 1;
+                continue;
+            }
+            if (t.includes('pharmacy')) {
+                vendorCount['pharmacy_healthcare'] = (vendorCount['pharmacy_healthcare'] || 0) + 1;
+                continue;
+            }
+            if (t.includes('shop') || t === 'store') {
+                vendorCount['other'] = (vendorCount['other'] || 0) + 1;
+                continue;
+            }
+
+            // 3) New canonical keys map directly.
+            if (moduleKeySet.has(t)) {
+                vendorCount[t] = (vendorCount[t] || 0) + 1;
+                continue;
+            }
+
+            // 4) Unknown merchant types still count under `Other`.
+            vendorCount['other'] = (vendorCount['other'] || 0) + 1;
         }
 
         const byType = new Map(

@@ -6,11 +6,12 @@ import { OrderStatus } from '../../common/constants/orderStatus';
 import { AuthRequest } from '../../common/middleware/auth.middleware';
 import { sendResponse } from '../../common/utils/response';
 import { getPaginationOptions, formatPaginatedResponse } from '../../common/utils/pagination';
+import { COMMERCIAL_MERCHANT_TYPES, type MerchantType } from '../admin/moduleMerchantTypes';
 
 const merchantService = new MerchantOnboardingService();
 const ordersService = new OrdersService();
 const earningsService = new MerchantEarningsService();
-const allowedBusinessTypes = ['restaurant', 'grocery', 'pharmacy', 'store'] as const;
+const allowedBusinessTypes = COMMERCIAL_MERCHANT_TYPES;
 
 export class MerchantController {
     // --- Store Management ---
@@ -48,13 +49,23 @@ export class MerchantController {
                 !userId || !firstName || !lastName || !shopName || !businessType ||
                 !description || !contactPhone || !contactEmail || !address ||
                 !city || !state || !postalCode || !country || !latitude ||
-                !longitude || !logoUri
+                !longitude || !logoUri || !openingTime || !closingTime
             ) {
-                return sendResponse(res, 400, false, 'All fields except bannerUri, offDays, openingTime, closingTime are required for account completion');
+                return sendResponse(
+                    res,
+                    400,
+                    false,
+                    'All fields except bannerUri and offDays are required for account completion (openingTime/closingTime required)',
+                );
             }
 
             if (!allowedBusinessTypes.includes(businessType)) {
-                return sendResponse(res, 400, false, 'Invalid businessType. Must be one of: restaurant, grocery, pharmacy, store');
+                return sendResponse(
+                    res,
+                    400,
+                    false,
+                    `Invalid businessType. Must be one of: ${allowedBusinessTypes.join(', ')}`,
+                );
             }
 
             const result = await merchantService.registerMerchant(
@@ -62,7 +73,7 @@ export class MerchantController {
                 firstName,
                 lastName,
                 shopName,
-                businessType as 'restaurant' | 'grocery' | 'pharmacy' | 'store',
+                businessType as MerchantType,
                 description,
                 contactPhone,
                 contactEmail,
@@ -92,11 +103,26 @@ export class MerchantController {
         }
     }
 
+    // --- Multi-merchant support ---
+    // Returns all merchant rows owned by the authenticated user so the client can pick a `merchantId`.
+    async listStores(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id as string;
+            const result = await merchantService.listMerchantsByUserId(userId);
+            if (!result.success) return sendResponse(res, 404, false, result.message || 'Merchants not found');
+            return sendResponse(res, 200, true, 'Merchants fetched', result.data);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
     async getStore(req: AuthRequest, res: Response) {
         try {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id as string;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const merchantId = typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined;
+            const result = await merchantService.getMerchantByUserId(userId, merchantId);
             if (!result.success) return sendResponse(res, 404, false, result.message || 'Error fetching store');
             return sendResponse(res, 200, true, 'Store fetched', result.data);
         } catch (error: any) {
@@ -108,7 +134,10 @@ export class MerchantController {
         try {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id as string;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
             const store = await merchantService.updateStore(result.data.id, req.body);
@@ -131,7 +160,10 @@ export class MerchantController {
 
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
             const store = await merchantService.updateStatus(result.data.id, status);
@@ -146,7 +178,10 @@ export class MerchantController {
         try {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
             const categories = await merchantService.getCategories(result.data.id);
@@ -160,7 +195,10 @@ export class MerchantController {
         try {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
             const catalog = await merchantService.getCatalog(result.data.id);
@@ -177,7 +215,10 @@ export class MerchantController {
 
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
             const category = await merchantService.createCategory(result.data.id, name, description);
@@ -191,7 +232,10 @@ export class MerchantController {
         try {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             const success = await merchantService.deleteCategory(result.data.id, req.params.id as string);
             return sendResponse(res, 200, true, 'Category deleted');
         } catch (error: any) {
@@ -203,7 +247,10 @@ export class MerchantController {
         try {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             const category = await merchantService.updateCategory(result.data.id, req.params.id as string, req.body);
             return sendResponse(res, 200, true, 'Category updated', category);
         } catch (error: any) {
@@ -220,7 +267,10 @@ export class MerchantController {
 
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
             const product = await merchantService.createProduct(result.data.id, {
@@ -243,7 +293,10 @@ export class MerchantController {
         try {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             await merchantService.deleteProduct(result.data.id, req.params.id as string);
             return sendResponse(res, 200, true, 'Product deleted');
         } catch (error: any) {
@@ -259,7 +312,10 @@ export class MerchantController {
 
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             const product = await merchantService.updateProductAvailability(result.data.id, req.params.id as string, is_available);
             return sendResponse(res, 200, true, 'Product availability updated', product);
         } catch (error: any) {
@@ -272,7 +328,10 @@ export class MerchantController {
         try {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             const { status } = req.query;
             const pagination = getPaginationOptions(req.query);
             const orders = await merchantService.getOrders(result.data.id, pagination, status as string);
@@ -286,7 +345,10 @@ export class MerchantController {
         try {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id as string;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             const order = await merchantService.getOrderById(result.data.id, req.params.id as string);
             return sendResponse(res, 200, true, 'Order fetched', order);
         } catch (error: any) {
@@ -298,7 +360,10 @@ export class MerchantController {
         try {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
             const pagination = getPaginationOptions(req.query);
@@ -319,7 +384,10 @@ export class MerchantController {
         try {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
             const pagination = getPaginationOptions(req.query);
@@ -334,7 +402,10 @@ export class MerchantController {
         try {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
             const pagination = getPaginationOptions(req.query);
@@ -349,7 +420,10 @@ export class MerchantController {
         try {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
             const pagination = getPaginationOptions(req.query);
@@ -365,7 +439,10 @@ export class MerchantController {
             const { status } = req.body;
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
             const allowedMerchantStatuses = [
@@ -391,7 +468,10 @@ export class MerchantController {
         try {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
             await ordersService.acceptOrder(result.data.id, req.params.id as string);
@@ -407,7 +487,10 @@ export class MerchantController {
             const { reason } = req.body;
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
             const order = await ordersService.declineOrder(result.data.id, req.params.id as string, reason);
@@ -420,7 +503,10 @@ export class MerchantController {
     async prepareOrder(req: AuthRequest, res: Response) {
         try {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
-            const result = await merchantService.getMerchantByUserId(req.user.id);
+            const result = await merchantService.getMerchantByUserId(
+                req.user.id,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             const order = await ordersService.updateOrderStatus(result.data.id, req.params.id as string, OrderStatus.PREPARING);
             return sendResponse(res, 200, true, 'Order is now being prepared', order);
         } catch (error: any) {
@@ -431,7 +517,10 @@ export class MerchantController {
     async readyForPickupOrder(req: AuthRequest, res: Response) {
         try {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
-            const result = await merchantService.getMerchantByUserId(req.user.id);
+            const result = await merchantService.getMerchantByUserId(
+                req.user.id,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             const order = await ordersService.updateOrderStatus(result.data.id, req.params.id as string, OrderStatus.READY_FOR_PICKUP);
             return sendResponse(res, 200, true, 'Order is ready for pickup', order);
         } catch (error: any) {
@@ -455,7 +544,10 @@ export class MerchantController {
         try {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
             const earnings = await earningsService.getHistory(result.data.id);
@@ -475,7 +567,10 @@ export class MerchantController {
 
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
 
             const group = await merchantService.createExtraGroup(result.data.id, productId as string, {
                 title,
@@ -494,7 +589,10 @@ export class MerchantController {
             const { id } = req.params;
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
 
             await merchantService.deleteExtraGroup(result.data.id, id as string);
             return sendResponse(res, 200, true, 'Extra group deleted');
@@ -512,7 +610,10 @@ export class MerchantController {
 
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
 
             const option = await merchantService.addExtraOption(result.data.id, groupId as string, {
                 name,
@@ -530,7 +631,10 @@ export class MerchantController {
             const { id } = req.params;
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(userId);
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
 
             await merchantService.deleteExtraOption(result.data.id, id as string);
             return sendResponse(res, 200, true, 'Extra option deleted');

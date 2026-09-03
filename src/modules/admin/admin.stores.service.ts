@@ -1,5 +1,5 @@
 import { supabase } from '../../config/supabase';
-import { moduleToMerchantTypes } from './moduleMerchantTypes';
+import { moduleToMerchantTypes, COMMERCIAL_MERCHANT_TYPES } from './moduleMerchantTypes';
 import { normalizeScope } from './admin.scope';
 import {
     type AuditActor,
@@ -20,7 +20,7 @@ interface ListFilters {
     limit?: number;
 }
 
-const ALLOWED_MERCHANT_TYPES = ['restaurant', 'grocery', 'pharmacy', 'store'] as const;
+const ALLOWED_MERCHANT_TYPES = COMMERCIAL_MERCHANT_TYPES;
 
 interface CreateStoreInput {
     name: string;
@@ -42,6 +42,15 @@ interface CreateStoreInput {
     banner_url?: string | null;
     description?: string;
     verification_rejection_reason?: string | null;
+    opening_time?: string | null;
+    closing_time?: string | null;
+    // Operational hours & delivery configuration
+    active_days?: string[] | null;
+    off_days?: string[] | null;
+    is_pickup_only?: boolean | null;
+    delivery_radius?: number | null;
+    preparation_time?: string | null;
+    delivery_fee?: number | null;
 }
 
 function isVerificationComplete(row: Record<string, any>): { ok: boolean; missing: string[] } {
@@ -55,6 +64,8 @@ function isVerificationComplete(row: Record<string, any>): { ok: boolean; missin
     if (row.longitude == null || !Number.isFinite(Number(row.longitude))) missing.push('longitude');
     if (!String(row.logo_url || '').trim()) missing.push('logo');
     if (!String(row.banner_url || '').trim()) missing.push('banner');
+    if (!String(row.opening_time || '').trim()) missing.push('opening_time');
+    if (!String(row.closing_time || '').trim()) missing.push('closing_time');
     return { ok: missing.length === 0, missing };
 }
 
@@ -70,7 +81,7 @@ export class AdminStoresService {
         if (!ALLOWED_MERCHANT_TYPES.includes(type as (typeof ALLOWED_MERCHANT_TYPES)[number])) {
             return {
                 success: false,
-                message: 'type must be one of: restaurant, grocery, pharmacy, store',
+                message: `type must be one of: ${ALLOWED_MERCHANT_TYPES.join(', ')}`,
                 data: null,
             };
         }
@@ -92,6 +103,16 @@ export class AdminStoresService {
 
         const status = (input.status || 'verified').trim().toLowerCase();
 
+        const openingTime = (input.opening_time || '').trim();
+        const closingTime = (input.closing_time || '').trim();
+        if (!openingTime || !closingTime) {
+            return {
+                success: false,
+                message: 'opening_time and closing_time are required',
+                data: null,
+            };
+        }
+
         let userId: string | null = null;
         if (phone) {
             const { data: byPhone } = await supabase.from('users').select('id, role').eq('phone', phone).maybeSingle();
@@ -103,14 +124,6 @@ export class AdminStoresService {
         }
 
         if (userId) {
-            const { data: existingMerchant } = await supabase
-                .from('merchants')
-                .select('id')
-                .eq('user_id', userId)
-                .maybeSingle();
-            if (existingMerchant) {
-                return { success: false, message: 'This user already has a merchant profile', data: null };
-            }
             await supabase
                 .from('users')
                 .update({
@@ -165,6 +178,14 @@ export class AdminStoresService {
                     logo_url: input.logo_url || null,
                     banner_url: input.banner_url || null,
                     description: input.description || null,
+                    opening_time: openingTime,
+                    closing_time: closingTime,
+                    active_days: input.active_days ?? undefined,
+                    off_days: input.off_days ?? undefined,
+                    is_pickup_only: input.is_pickup_only ?? undefined,
+                    delivery_radius: input.delivery_radius ?? undefined,
+                    preparation_time: input.preparation_time ?? undefined,
+                    delivery_fee: input.delivery_fee ?? undefined,
                     verified_at: status === 'verified' ? new Date().toISOString() : null,
                 },
             ])
@@ -440,7 +461,7 @@ export class AdminStoresService {
             if (!ALLOWED_MERCHANT_TYPES.includes(t as (typeof ALLOWED_MERCHANT_TYPES)[number])) {
                 return {
                     success: false,
-                    message: 'type must be one of: restaurant, grocery, pharmacy, store',
+                    message: `type must be one of: ${ALLOWED_MERCHANT_TYPES.join(', ')}`,
                     data: null,
                 };
             }

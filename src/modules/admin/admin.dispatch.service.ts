@@ -62,11 +62,26 @@ type MerchantType = string | null | undefined;
 
 function resolveModuleKey(merchantType: MerchantType): string {
     const type = String(merchantType || '').toLowerCase();
-    if (type.includes('pharmacy')) return 'pharmacy';
-    if (type.includes('food') || type.includes('restaurant')) return 'food';
     if (type.includes('parcel')) return 'parcel';
+
+    // New 25-category taxonomy → dispatch grouping buckets.
+    if (type === 'supermarket_groceries' || type.includes('grocery')) return 'grocery';
+    if (type === 'pharmacy_healthcare' || type.includes('pharmacy')) return 'pharmacy';
+    if (
+        type === 'food_restaurant' ||
+        type === 'bakery_confectionery' ||
+        type === 'alcohol_beverages' ||
+        type.includes('food') ||
+        type.includes('restaurant')
+    ) {
+        return 'food';
+    }
+
+    // Legacy `store` treated as a generic shop.
     if (type.includes('shop') || type === 'store') return 'shop';
-    return 'grocery';
+
+    // Everything else (beauty, fashion, electronics, etc.) is dispatched as "shop".
+    return 'shop';
 }
 
 const MODULE_TO_CATEGORY: Record<string, string> = {

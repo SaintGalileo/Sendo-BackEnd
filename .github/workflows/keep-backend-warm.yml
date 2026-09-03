@@ -1,0 +1,23 @@
+# Ping the Render backend every ~10 minutes so free-tier instances stay warm.
+name: Keep backend warm
+
+on:
+  schedule:
+    # GitHub cron is approximate; 10 min is enough vs typical Render idle sleep.
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ping backend /health
+        env:
+          # Optional repo variable; falls back to the current Render host.
+          BACKEND_HEALTH_URL: ${{ vars.BACKEND_HEALTH_URL }}
+        run: |
+          URL="${BACKEND_HEALTH_URL:-https://sendo-backend-8b8a.onrender.com/health}"
+          echo "Pinging $URL"
+          curl -fsS --max-time 60 "$URL"
+          echo

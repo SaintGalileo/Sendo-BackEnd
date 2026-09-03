@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { AuthRequest } from '../../common/middleware/auth.middleware';
 import { AuthService } from './auth.service';
+import { clientMetaFromRequest } from '../../common/utils/requestMeta';
 
 const authService = new AuthService();
 
@@ -98,6 +99,10 @@ export class AuthController {
             return res.status(400).json({ success: false, message: 'registrationToken, firstName, lastName, storeName, and merchantType are required' });
         }
 
+        if (!openingTime || !closingTime) {
+            return res.status(400).json({ success: false, message: 'openingTime and closingTime are required' });
+        }
+
         const result = await authService.registerMerchant(
             registrationToken,
             firstName,
@@ -136,7 +141,15 @@ export class AuthController {
             return res.status(400).json({ success: false, message: 'Email and password are required' });
         }
 
-        const result = await authService.adminLogin(email, password);
+        const result = await authService.adminLogin(email, password, clientMetaFromRequest(req));
+        return res.status(result.success ? 200 : 401).json(result);
+    }
+
+    async adminLogout(req: AuthRequest, res: Response) {
+        if (!req.user?.id) {
+            return res.status(401).json({ success: false, message: 'Unauthorized' });
+        }
+        const result = await authService.adminLogout(req.user, clientMetaFromRequest(req));
         return res.status(result.success ? 200 : 401).json(result);
     }
 

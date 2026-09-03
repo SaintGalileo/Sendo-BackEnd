@@ -1,9 +1,13 @@
+import { randomUUID } from 'crypto';
 import { supabase } from '../../config/supabase';
 import { EmailService } from '../notifications/email.service';
 import axios from 'axios';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import dotenv from 'dotenv';
+import { COMMERCIAL_MERCHANT_TYPES, type MerchantType } from '../admin/moduleMerchantTypes';
+import { writeAuditLog } from '../admin/admin.audit';
+import type { ClientRequestMeta } from '../../common/utils/requestMeta';
 
 dotenv.config();
 
@@ -15,7 +19,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your_super_secret_jwt_key';
 const emailService = new EmailService();
 
 export class AuthService {
-    private readonly allowedMerchantTypes = ['restaurant', 'grocery', 'pharmacy', 'store'];
+    private readonly allowedMerchantTypes = COMMERCIAL_MERCHANT_TYPES;
     async sendOTP(phone: string): Promise<{ success: boolean; message: string }> {
         // Generate a 6-digit random OTP
         const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
@@ -109,12 +113,12 @@ export class AuthService {
             return { success: false, message: 'Authentication error' };
         }
 
-        // Fetch all available sub-profiles to allow unified access across roles
-        const { data: merchantData } = await supabase
+        // Fetch merchant sub-profiles (multi-merchant support).
+        const { data: merchantRows } = await supabase
             .from('merchants')
             .select('*')
-            .eq('user_id', userData.id)
-            .maybeSingle();
+            .eq('user_id', userData.id);
+        const merchants = merchantRows || [];
 
         const { data: courierData } = await supabase
             .from('couriers')
@@ -135,7 +139,7 @@ export class AuthService {
             };
         }
 
-        if (role === 'merchant' && !merchantData) {
+        if (role === 'merchant' && merchants.length === 0) {
             return { 
                 success: true, 
                 message: 'OTP correct. Merchant registration required.', 
@@ -147,7 +151,7 @@ export class AuthService {
 
         // Calculate all active roles
         const roles = ['consumer']; 
-        if (merchantData) roles.push('merchant');
+        if (merchants.length > 0) roles.push('merchant');
         if (courierData) roles.push('courier');
 
         // Select primary role for legacy compatibility (prioritizing professional roles for app validation)
@@ -180,7 +184,9 @@ export class AuthService {
             data: {
                 ...userToReturn, // Flat structure for apps like Driver App (VerifyOtpScreen line 87)
                 user: userToReturn, // Wrapped structure for other apps
-                merchant: merchantData || undefined,
+                merchants,
+                // Legacy compatibility: still return the first merchant under `merchant`.
+                merchant: merchants[0] || undefined,
                 courier: courierData || undefined,
             },
             token,
@@ -337,8 +343,8 @@ export class AuthService {
         contactEmail?: string,
         logoUri?: string,
         bannerUri?: string,
-        openingTime?: string,
-        closingTime?: string,
+        openingTime: string,
+        closingTime: string,
         activeDays: string[] = [],
         offDays?: string[],
         isPickupOnly: boolean = false,
@@ -350,8 +356,11 @@ export class AuthService {
         const decoded = this.verifyRegistrationToken(registrationToken);
         if (!decoded) return { success: false, message: 'Invalid or expired registration token' };
 
-        if (!this.allowedMerchantTypes.includes(merchantType)) {
-            return { success: false, message: 'merchantType must be one of: restaurant, grocery, pharmacy, store' };
+        if (!this.allowedMerchantTypes.includes(merchantType as MerchantType)) {
+            return {
+                success: false,
+                message: `merchantType must be one of: ${COMMERCIAL_MERCHANT_TYPES.join(', ')}`,
+            };
         }
 
         // 1. Get or Create User
@@ -386,37 +395,39 @@ export class AuthService {
             userData = data;
         }
 
-        // 2. Upsert Merchant sub-profile
+        // 2. Insert Merchant sub-profile (multi-merchant: no upsert by user_id)
         const { data: merchantData, error: merchantError } = await supabase
             .from('merchants')
-            .upsert({
-                user_id: userData.id,
-                first_name: firstName,
-                last_name: lastName,
-                name: storeName,
-                type: merchantType,
-                status: 'unverified',
-                description,
-                phone: contactPhone || decoded.phone,
-                contact_email: contactEmail || email,
-                address,
-                city,
-                state,
-                postal_code: postalCode,
-                country,
-                latitude,
-                longitude,
-                logo_url: logoUri,
-                banner_url: bannerUri,
-                opening_time: openingTime,
-                closing_time: closingTime,
-                active_days: activeDays,
-                off_days: offDays,
-                is_pickup_only: isPickupOnly,
-                delivery_radius: deliveryRadius,
-                preparation_time: preparationTime,
-                delivery_fee: deliveryFee
-            }, { onConflict: 'user_id' })
+            .insert([
+                {
+                    user_id: userData.id,
+                    first_name: firstName,
+                    last_name: lastName,
+                    name: storeName,
+                    type: merchantType as MerchantType,
+                    status: 'unverified',
+                    description,
+                    phone: contactPhone || decoded.phone,
+                    contact_email: contactEmail || email,
+                    address,
+                    city,
+                    state,
+                    postal_code: postalCode,
+                    country,
+                    latitude,
+                    longitude,
+                    logo_url: logoUri,
+                    banner_url: bannerUri,
+                    opening_time: openingTime,
+                    closing_time: closingTime,
+                    active_days: activeDays,
+                    off_days: offDays,
+                    is_pickup_only: isPickupOnly,
+                    delivery_radius: deliveryRadius,
+                    preparation_time: preparationTime,
+                    delivery_fee: deliveryFee,
+                },
+            ])
             .select()
             .single();
 
@@ -516,7 +527,11 @@ export class AuthService {
         return { success: true, message: 'Email verified successfully' };
     }
 
-    async adminLogin(email: string, password: string): Promise<{ success: boolean; message: string; data?: any; token?: string }> {
+    async adminLogin(
+        email: string,
+        password: string,
+        meta?: ClientRequestMeta,
+    ): Promise<{ success: boolean; message: string; data?: any; token?: string }> {
         const { data: user, error } = await supabase
             .from('users')
             .select('*')
@@ -541,12 +556,12 @@ export class AuthService {
         const roles = ['admin'];
         if (isSuperAdmin) roles.push('super_admin');
 
-        const { data: merchantData } = await supabase
+        const { data: merchantRows } = await supabase
             .from('merchants')
             .select('id')
             .eq('user_id', user.id)
-            .maybeSingle();
-        if (merchantData) roles.push('merchant');
+            .limit(1);
+        if (merchantRows && merchantRows.length > 0) roles.push('merchant');
 
         const { data: courierData } = await supabase
             .from('couriers')
@@ -556,6 +571,8 @@ export class AuthService {
         if (courierData) roles.push('courier');
 
         const primaryRole = isSuperAdmin ? 'super_admin' : 'admin';
+        const sessionId = randomUUID();
+        const loginAt = new Date().toISOString();
 
         const token = jwt.sign(
             {
@@ -563,10 +580,28 @@ export class AuthService {
                 email: user.email,
                 role: primaryRole,
                 roles,
+                sessionId,
+                loginAt,
             },
             JWT_SECRET,
             { expiresIn: '7d' }
         );
+
+        await writeAuditLog({
+            action: 'login',
+            entityType: 'session',
+            entityId: sessionId,
+            entityLabel: user.email,
+            reason: 'Admin signed in',
+            after: {
+                session_id: sessionId,
+                device: meta?.device || 'Unknown device',
+                user_agent: meta?.userAgent || null,
+                ip: meta?.ip || null,
+                logged_in_at: loginAt,
+            },
+            actor: { id: user.id, email: user.email },
+        });
 
         return {
             success: true,
@@ -580,9 +615,49 @@ export class AuthService {
                 role: primaryRole,
                 roles,
                 is_super_admin: isSuperAdmin,
+                session_id: sessionId,
             },
             token,
         };
+    }
+
+    async adminLogout(
+        user: { id?: string; email?: string | null; sessionId?: string; loginAt?: string; iat?: number },
+        meta?: ClientRequestMeta,
+    ): Promise<{ success: boolean; message: string }> {
+        if (!user?.id) {
+            return { success: false, message: 'Unauthorized' };
+        }
+
+        const logoutAt = new Date();
+        const loginAt =
+            user.loginAt ||
+            (typeof user.iat === 'number' ? new Date(user.iat * 1000).toISOString() : null);
+        const sessionId = user.sessionId || randomUUID();
+        const durationSeconds =
+            loginAt != null
+                ? Math.max(0, Math.round((logoutAt.getTime() - new Date(loginAt).getTime()) / 1000))
+                : null;
+
+        await writeAuditLog({
+            action: 'logout',
+            entityType: 'session',
+            entityId: sessionId,
+            entityLabel: user.email || null,
+            reason: 'Admin signed out',
+            after: {
+                session_id: sessionId,
+                device: meta?.device || 'Unknown device',
+                user_agent: meta?.userAgent || null,
+                ip: meta?.ip || null,
+                logged_in_at: loginAt,
+                logged_out_at: logoutAt.toISOString(),
+                session_duration_seconds: durationSeconds,
+            },
+            actor: { id: user.id, email: user.email ?? null },
+        });
+
+        return { success: true, message: 'Admin logout logged' };
     }
 
     async adminMe(userId: string): Promise<{ success: boolean; message: string; data?: any }> {
