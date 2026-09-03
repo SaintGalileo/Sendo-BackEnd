@@ -18,7 +18,7 @@ export class StoresService {
             .in('status', ['verified', 'active', 'approved']);
 
         if (filters.type) {
-            if (!this.allowedStoreTypes.includes(filters.type)) {
+            if (!(this.allowedStoreTypes as readonly string[]).includes(filters.type)) {
                 throw new Error(`Invalid store type: ${filters.type}`);
             }
             query = query.eq('type', filters.type);
@@ -89,7 +89,7 @@ export class StoresService {
             .select('*', { count: 'exact' });
 
         if (type) {
-            if (!this.allowedStoreTypes.includes(type)) {
+            if (!(this.allowedStoreTypes as readonly string[]).includes(type)) {
                 throw new Error(`Invalid store type: ${type}`);
             }
             query = query.eq('type', type);

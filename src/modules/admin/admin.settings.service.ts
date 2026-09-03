@@ -328,7 +328,7 @@ export class AdminSettingsService {
         // Vendor counts from merchants by type
         const { data: merchants } = await supabase.from('merchants').select('type, status');
         const vendorCount: Record<string, number> = {};
-        const moduleKeySet = new Set(this.CANONICAL_MODULES.map((m) => m.key));
+        const moduleKeySet = new Set<string>(this.CANONICAL_MODULES.map((m) => m.key));
         for (const m of merchants || []) {
             const t = String(m.type || '').toLowerCase();
 
