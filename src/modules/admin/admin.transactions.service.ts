@@ -54,16 +54,30 @@ function merchantName(row: Record<string, unknown>): string {
     return String(m?.name ?? row.store_name ?? row.merchant_name ?? row.provider ?? '—');
 }
 
+/** Prefer canonical `total_price`; keep legacy aliases as fallback. */
 function orderTotal(row: Record<string, unknown>): number {
-    return num(row.total_amount ?? row.total_price ?? row.total ?? row.amount);
+    return num(row.total_price ?? row.total_amount ?? row.total ?? row.amount);
 }
 
 function orderTax(row: Record<string, unknown>): number {
     return num(row.tax_amount ?? row.tax ?? row.vat ?? row.vat_amount);
 }
 
+function orderDeliveryFee(row: Record<string, unknown>): number {
+    return num(row.delivery_fee ?? row.deliveryFee ?? row.fee);
+}
+
 function orderStatus(row: Record<string, unknown>): string {
     return String(row.status ?? row.order_status ?? '—');
+}
+
+function merchantTypeLabel(type: unknown): string {
+    const t = String(type || '').trim();
+    if (!t) return '—';
+    return t
+        .split('_')
+        .map((p) => (p ? p[0].toUpperCase() + p.slice(1) : p))
+        .join(' ');
 }
 
 function applyDateRange<T extends { gte: (col: string, val: string) => T; lte: (col: string, val: string) => T }>(
@@ -75,6 +89,12 @@ function applyDateRange<T extends { gte: (col: string, val: string) => T; lte: (
     if (dateFrom) q = q.gte('created_at', dateFrom);
     if (dateTo) q = q.lte('created_at', dateTo);
     return q;
+}
+
+async function getKvList(key: string): Promise<Record<string, unknown>[]> {
+    const { data, error } = await supabase.from('admin_settings').select('value').eq('key', key).maybeSingle();
+    if (error || !data) return [];
+    return Array.isArray(data.value) ? (data.value as Record<string, unknown>[]) : [];
 }
 
 /** Try `withdrawals` then `withdraw_requests`; filter store vs courier via type/role. */
@@ -162,7 +182,7 @@ export class AdminTransactionsService {
     async getTransactionReport(dateFrom?: string, dateTo?: string) {
         let query = supabase
             .from('orders')
-            .select('total_amount, delivery_fee, status, payment_status, payment_method, created_at')
+            .select('total_price, delivery_fee, status, payment_status, payment_method, created_at')
             .eq('status', 'delivered');
 
         query = applyDateRange(query, dateFrom, dateTo);
@@ -170,8 +190,11 @@ export class AdminTransactionsService {
         const { data, error } = await query;
         if (error) return { success: false, message: error.message, data: null };
 
-        const totalRevenue = (data || []).reduce((s, o) => s + (Number(o.total_amount) || 0), 0);
-        const totalDeliveryFees = (data || []).reduce((s, o) => s + (Number(o.delivery_fee) || 0), 0);
+        const totalRevenue = (data || []).reduce((s, o) => s + orderTotal(o as Record<string, unknown>), 0);
+        const totalDeliveryFees = (data || []).reduce(
+            (s, o) => s + orderDeliveryFee(o as Record<string, unknown>),
+            0,
+        );
 
         return {
             success: true,
@@ -424,51 +447,195 @@ export class AdminTransactionsService {
     async getDayWiseReport(dateFrom?: string, dateTo?: string) {
         let query = supabase
             .from('orders')
-            .select('total_amount, delivery_fee, status, created_at')
+            .select('total_price, delivery_fee, status, created_at, merchant_id, merchant:merchants!orders_merchant_id_fkey(type)')
             .eq('status', 'delivered');
 
         query = applyDateRange(query, dateFrom, dateTo);
 
-        const { data, error } = await query;
-        if (error) return { success: false, message: error.message, data: null };
+        let { data, error } = await query;
+        if (error) {
+            let plain = supabase
+                .from('orders')
+                .select('total_price, delivery_fee, status, created_at')
+                .eq('status', 'delivered');
+            plain = applyDateRange(plain, dateFrom, dateTo);
+            const fb = await plain;
+            if (fb.error) return { success: false, message: fb.error.message, data: null };
+            data = fb.data as typeof data;
+        }
 
-        const dayMap: Record<string, { date: string; orders: number; revenue: number; delivery_fees: number }> = {};
+        const dayMap: Record<
+            string,
+            {
+                date: string;
+                orders: number;
+                revenue: number;
+                delivery_fees: number;
+                gross: number;
+                fee: number;
+                net: number;
+                module: string;
+            }
+        > = {};
+
         for (const order of data || []) {
-            const day = order.created_at?.slice(0, 10) || 'unknown';
-            if (!dayMap[day]) dayMap[day] = { date: day, orders: 0, revenue: 0, delivery_fees: 0 };
+            const row = order as Record<string, unknown>;
+            const day = String(row.created_at || '').slice(0, 10) || 'unknown';
+            const m = row.merchant as { type?: string } | null;
+            const moduleLabel = merchantTypeLabel(m?.type);
+            if (!dayMap[day]) {
+                dayMap[day] = {
+                    date: day,
+                    orders: 0,
+                    revenue: 0,
+                    delivery_fees: 0,
+                    gross: 0,
+                    fee: 0,
+                    net: 0,
+                    module: moduleLabel,
+                };
+            }
+            const revenue = orderTotal(row);
+            const fee = orderDeliveryFee(row);
             dayMap[day].orders += 1;
-            dayMap[day].revenue += Number(order.total_amount) || 0;
-            dayMap[day].delivery_fees += Number(order.delivery_fee) || 0;
+            dayMap[day].revenue += revenue;
+            dayMap[day].delivery_fees += fee;
+            dayMap[day].gross += revenue;
+            dayMap[day].fee += fee;
+            dayMap[day].net += revenue - fee;
+            // Keep module when all rows share one type; otherwise mark mixed
+            if (dayMap[day].module !== moduleLabel && moduleLabel !== '—') {
+                if (dayMap[day].module === '—') dayMap[day].module = moduleLabel;
+                else dayMap[day].module = 'Mixed';
+            }
         }
 
         return { success: true, data: Object.values(dayMap).sort((a, b) => a.date.localeCompare(b.date)) };
     }
 
-    async getItemWiseReport() {
-        const { data, error } = await supabase
+    async getItemWiseReport(dateFrom?: string, dateTo?: string) {
+        // Canonical order_items: product_id, quantity, price — join products for names.
+        let query = supabase
             .from('order_items')
-            .select('item_id, item_name, quantity, price, total');
+            .select(`
+                product_id, quantity, price, created_at, order_id,
+                product:products(
+                    id, name, price, stock_quantity, merchant_id,
+                    merchant:merchants(id, name, type)
+                )
+            `)
+            .limit(5000);
 
-        if (error) return { success: false, message: error.message, data: null };
+        query = applyDateRange(query, dateFrom, dateTo);
 
-        const itemMap: Record<string, { item_id: string; item_name: string; total_quantity: number; total_sales: number }> = {};
-        for (const item of data || []) {
-            const key = item.item_id || item.item_name || 'unknown';
-            if (!itemMap[key]) {
-                itemMap[key] = { item_id: item.item_id, item_name: item.item_name, total_quantity: 0, total_sales: 0 };
-            }
-            itemMap[key].total_quantity += Number(item.quantity) || 0;
-            itemMap[key].total_sales += Number(item.total || item.price) || 0;
+        const { data, error } = await query;
+        if (error) {
+            // Fallback without nested merchant join / stock
+            let plain = supabase
+                .from('order_items')
+                .select(`
+                    product_id, quantity, price, created_at,
+                    product:products(id, name, price, merchant_id)
+                `)
+                .limit(5000);
+            plain = applyDateRange(plain, dateFrom, dateTo);
+            const fb = await plain;
+            if (fb.error) return { success: false, message: fb.error.message, data: null };
+
+            return {
+                success: true,
+                data: this.aggregateItemRows(fb.data as Record<string, unknown>[]),
+            };
         }
 
-        return { success: true, data: Object.values(itemMap) };
+        return {
+            success: true,
+            data: this.aggregateItemRows((data || []) as Record<string, unknown>[]),
+        };
+    }
+
+    private aggregateItemRows(items: Record<string, unknown>[]) {
+        const itemMap: Record<
+            string,
+            {
+                item_id: string;
+                item_name: string;
+                name: string;
+                total_quantity: number;
+                sell_count: number;
+                sellCount: number;
+                total_sales: number;
+                total_sold: number;
+                totalSold: number;
+                price: number;
+                store: string;
+                store_name: string;
+                module: string;
+                stock: string;
+                stock_quantity: string;
+                total_discount: number;
+                avg_ratings: string;
+            }
+        > = {};
+
+        for (const item of items) {
+            const product = item.product as Record<string, unknown> | null | undefined;
+            const merchant = product?.merchant as { id?: string; name?: string; type?: string } | null | undefined;
+            const key = String(item.product_id || product?.id || 'unknown');
+            const name = String(product?.name || '—');
+            const unitPrice = num(item.price ?? product?.price);
+            const qty = num(item.quantity) || 0;
+            const lineSales = unitPrice * qty;
+            const storeName = String(merchant?.name || '—');
+            const module = merchantTypeLabel(merchant?.type);
+            const stock =
+                product?.stock_quantity !== undefined && product?.stock_quantity !== null
+                    ? String(product.stock_quantity)
+                    : 'N/A';
+
+            if (!itemMap[key]) {
+                itemMap[key] = {
+                    item_id: key,
+                    item_name: name,
+                    name,
+                    total_quantity: 0,
+                    sell_count: 0,
+                    sellCount: 0,
+                    total_sales: 0,
+                    total_sold: 0,
+                    totalSold: 0,
+                    price: unitPrice,
+                    store: storeName,
+                    store_name: storeName,
+                    module,
+                    stock,
+                    stock_quantity: stock,
+                    total_discount: 0,
+                    avg_ratings: '—',
+                };
+            }
+            itemMap[key].total_quantity += qty;
+            itemMap[key].sell_count += qty;
+            itemMap[key].sellCount += qty;
+            itemMap[key].total_sales += lineSales;
+            itemMap[key].total_sold += lineSales;
+            itemMap[key].totalSold += lineSales;
+            // Prefer latest non-zero unit price
+            if (unitPrice > 0) itemMap[key].price = unitPrice;
+        }
+
+        return Object.values(itemMap).map((r, i) => ({
+            ...r,
+            sl: i + 1,
+            action: '',
+        }));
     }
 
     async getStoreWiseReport(dateFrom?: string, dateTo?: string) {
         let query = supabase
             .from('orders')
             .select(`
-                total_amount, status, created_at, merchant_id,
+                total_price, status, created_at, merchant_id,
                 merchant:merchants!orders_merchant_id_fkey(id, name)
             `)
             .eq('status', 'delivered');
@@ -477,18 +644,30 @@ export class AdminTransactionsService {
 
         const { data, error } = await query;
         if (error) {
-            // Fallback without join / legacy column names
             let plain = supabase
                 .from('orders')
-                .select('total_amount, status, created_at, merchant_id')
+                .select('total_price, status, created_at, merchant_id')
                 .eq('status', 'delivered');
             plain = applyDateRange(plain, dateFrom, dateTo);
             const fb = await plain;
             if (fb.error) return { success: false, message: fb.error.message, data: null };
 
-            const storeMap: Record<string, { store_id: string; store: string; store_name: string; total_orders: number; totalOrders: number; total_revenue: number; totalAmount: number; sl: number }> = {};
+            const storeMap: Record<
+                string,
+                {
+                    store_id: string;
+                    store: string;
+                    store_name: string;
+                    total_orders: number;
+                    totalOrders: number;
+                    total_revenue: number;
+                    totalAmount: number;
+                    sl: number;
+                }
+            > = {};
             for (const order of fb.data || []) {
-                const key = String(order.merchant_id || 'unknown');
+                const row = order as Record<string, unknown>;
+                const key = String(row.merchant_id || 'unknown');
                 if (!storeMap[key]) {
                     storeMap[key] = {
                         store_id: key,
@@ -503,7 +682,7 @@ export class AdminTransactionsService {
                 }
                 storeMap[key].total_orders += 1;
                 storeMap[key].totalOrders += 1;
-                const amt = Number(order.total_amount) || 0;
+                const amt = orderTotal(row);
                 storeMap[key].total_revenue += amt;
                 storeMap[key].totalAmount += amt;
             }
@@ -525,8 +704,9 @@ export class AdminTransactionsService {
             }
         > = {};
         for (const order of data || []) {
-            const m = order.merchant as { id?: string; name?: string } | null;
-            const key = String(m?.id || order.merchant_id || 'unknown');
+            const row = order as Record<string, unknown>;
+            const m = row.merchant as { id?: string; name?: string } | null;
+            const key = String(m?.id || row.merchant_id || 'unknown');
             const name = m?.name || '—';
             if (!storeMap[key]) {
                 storeMap[key] = {
@@ -542,7 +722,7 @@ export class AdminTransactionsService {
             }
             storeMap[key].total_orders += 1;
             storeMap[key].totalOrders += 1;
-            const amt = Number(order.total_amount) || 0;
+            const amt = orderTotal(row);
             storeMap[key].total_revenue += amt;
             storeMap[key].totalAmount += amt;
         }
@@ -552,12 +732,15 @@ export class AdminTransactionsService {
     }
 
     async getDisbursementReport() {
-        const { data, error } = await supabase
-            .from('disbursements')
-            .select('*');
+        const { data, error } = await supabase.from('disbursements').select('*');
 
         if (error) {
-            return { success: true, data: [], message: 'Disbursements table not available yet' };
+            return {
+                success: true,
+                data: [],
+                message:
+                    'Disbursement report is not available until disbursements are stored in the database.',
+            };
         }
 
         return { success: true, data: data || [] };
@@ -570,8 +753,8 @@ export class AdminTransactionsService {
             let query = supabase
                 .from('orders')
                 .select(`
-                    id, order_number, status, total_amount, total_price,
-                    tax_amount, tax, vat, payment_status, created_at, merchant_id,
+                    id, order_number, status, total_price, delivery_fee,
+                    payment_status, payment_method, created_at, merchant_id,
                     merchant:merchants!orders_merchant_id_fkey(id, name, type)
                 `)
                 .order('created_at', { ascending: false })
@@ -581,16 +764,15 @@ export class AdminTransactionsService {
 
             const { data, error } = await query;
             if (error) {
-                // Fallback without join / optional tax columns
                 let plain = supabase
                     .from('orders')
-                    .select('id, order_number, status, total_amount, created_at, merchant_id')
+                    .select('id, order_number, status, total_price, payment_status, created_at, merchant_id')
                     .order('created_at', { ascending: false })
                     .limit(2000);
                 plain = applyDateRange(plain, dateFrom, dateTo);
                 const fallback = await plain;
                 if (fallback.error) {
-                    return emptyList(fallback.error.message || 'Orders table not available');
+                    return { success: false, message: fallback.error.message, data: null };
                 }
                 const rows = (fallback.data || []).map((o: Record<string, unknown>, i: number) => ({
                     sl: i + 1,
@@ -632,7 +814,7 @@ export class AdminTransactionsService {
             });
             return { success: true, data: rows };
         } catch (e: any) {
-            return emptyList(e?.message || 'Failed to build order report');
+            return { success: false, message: e?.message || 'Failed to build order report', data: null };
         }
     }
 
@@ -672,9 +854,10 @@ export class AdminTransactionsService {
             };
 
             const filtered = (data || []).filter((r) => expenseLike(r as Record<string, unknown>));
-            if (filtered.length === 0 && (data || []).length > 0) {
-                // Columns don't look expense-like — return empty with message rather than dumping all txns
-                return emptyList('No expense-type transactions found (type/category columns may not mark expenses)');
+            if (filtered.length === 0) {
+                return emptyList(
+                    'No ledger debit / expense-type transactions found. This report lists debit-style rows from the transactions ledger (not a dedicated expenses table).',
+                );
             }
 
             const rows = filtered.map((raw, i) => {
@@ -682,13 +865,17 @@ export class AdminTransactionsService {
                 return {
                     sl: i + 1,
                     orderId: String(r.order_id ?? r.order_number ?? r.reference ?? r.id ?? '—'),
-                    type: String(r.type ?? r.category ?? r.transaction_type ?? 'expense'),
+                    type: String(r.type ?? r.category ?? r.transaction_type ?? 'debit'),
                     amount: num(r.amount),
                     action: '',
                     created_at: r.created_at,
                 };
             });
-            return { success: true, data: rows };
+            return {
+                success: true,
+                data: rows,
+                message: 'Showing ledger debits / expense-like transactions (not admin discount orders).',
+            };
         } catch (e: any) {
             return emptyList(e?.message || 'Failed to build expense report');
         }
@@ -709,11 +896,11 @@ export class AdminTransactionsService {
         rentalOnly?: boolean;
     }) {
         try {
+            // Live schema has no tax / module columns — select only known columns.
             let query = supabase
                 .from('orders')
                 .select(`
-                    id, merchant_id, total_amount, total_price, tax_amount, tax, vat,
-                    status, type, module, created_at,
+                    id, merchant_id, total_price, status, created_at,
                     merchant:merchants!orders_merchant_id_fkey(id, name, type)
                 `)
                 .order('created_at', { ascending: false })
@@ -723,14 +910,16 @@ export class AdminTransactionsService {
 
             let { data, error } = await query;
             if (error) {
-                const plain = await supabase
+                let plain = supabase
                     .from('orders')
-                    .select('id, merchant_id, total_amount, tax_amount, status, type, module, created_at')
+                    .select('id, merchant_id, total_price, status, created_at')
                     .limit(4000);
-                if (plain.error) {
-                    return emptyList(plain.error.message || 'Orders table not available for tax report');
+                plain = applyDateRange(plain, opts.dateFrom, opts.dateTo);
+                const fb = await plain;
+                if (fb.error) {
+                    return emptyList(fb.error.message || 'Orders table not available for tax report');
                 }
-                data = plain.data as any;
+                data = fb.data as typeof data;
             }
 
             const rows = (data || []) as Record<string, unknown>[];
@@ -742,16 +931,33 @@ export class AdminTransactionsService {
                     return mType.includes('parcel') || oType.includes('parcel');
                 }
                 if (opts.rentalOnly) {
-                    return mType.includes('rental') || oType.includes('rental');
+                    return (
+                        mType.includes('rental') ||
+                        oType.includes('rental') ||
+                        mType === 'services' ||
+                        mType.includes('automotive')
+                    );
                 }
                 return true;
             });
+
+            if (opts.parcelOnly && filtered.length === 0) {
+                return emptyList(
+                    'No parcel orders found. Parcel filtering uses merchant type / order module; order tax columns are not stored yet so tax amounts will be 0 when data appears.',
+                );
+            }
+            if (opts.rentalOnly && filtered.length === 0) {
+                return emptyList(
+                    'No rental orders found. Orders have no module/type column yet; link rental merchants or migrate orders.module to enable this report.',
+                );
+            }
 
             const map: Record<
                 string,
                 { merchant_id: string; vendor: string; tax_amount: number; total_amount: number; orders: number }
             > = {};
 
+            let anyTax = false;
             for (const o of filtered) {
                 const key = String(o.merchant_id || 'unknown');
                 const name = merchantName(o);
@@ -764,7 +970,9 @@ export class AdminTransactionsService {
                         orders: 0,
                     };
                 }
-                map[key].tax_amount += orderTax(o);
+                const tax = orderTax(o);
+                if (tax > 0) anyTax = true;
+                map[key].tax_amount += tax;
                 map[key].total_amount += orderTotal(o);
                 map[key].orders += 1;
             }
@@ -772,6 +980,7 @@ export class AdminTransactionsService {
             const result = Object.values(map).map((r, i) => ({
                 sl: i + 1,
                 vendor: r.vendor,
+                parcel: r.vendor,
                 provider: r.vendor,
                 merchant_id: r.merchant_id,
                 taxAmount: r.tax_amount,
@@ -782,62 +991,132 @@ export class AdminTransactionsService {
                 action: '',
             }));
 
-            return { success: true, data: result };
+            return {
+                success: true,
+                data: result,
+                ...(!anyTax
+                    ? {
+                          message:
+                              'Order-level tax columns are not stored yet; tax amounts are 0. Totals still reflect order value.',
+                      }
+                    : {}),
+            };
         } catch (e: any) {
             return emptyList(e?.message || 'Failed to build tax report');
         }
     }
 
+    /**
+     * Rental orders: prefer orders.module/type when present; else merchant type heuristic;
+     * else empty with an honest message (no fake trips).
+     */
+    private async fetchRentalOrders(dateFrom?: string, dateTo?: string) {
+        // Attempt 1: module / type columns (may be missing in live DB)
+        let typed = supabase
+            .from('orders')
+            .select(`
+                id, order_number, status, payment_status, total_price,
+                created_at, merchant_id, type, module,
+                merchant:merchants!orders_merchant_id_fkey(id, name, type)
+            `)
+            .or('type.eq.rental,module.eq.rental')
+            .order('created_at', { ascending: false })
+            .limit(2000);
+        typed = applyDateRange(typed, dateFrom, dateTo);
+        const typedResult = await typed;
+        if (!typedResult.error) {
+            return {
+                rows: (typedResult.data || []) as Record<string, unknown>[],
+                source: 'orders.module/type' as const,
+            };
+        }
+
+        // Attempt 2: all orders + merchant join, filter rental-ish merchant types
+        let joined = supabase
+            .from('orders')
+            .select(`
+                id, order_number, status, payment_status, total_price,
+                created_at, merchant_id,
+                merchant:merchants!orders_merchant_id_fkey(id, name, type)
+            `)
+            .order('created_at', { ascending: false })
+            .limit(4000);
+        joined = applyDateRange(joined, dateFrom, dateTo);
+        const joinedResult = await joined;
+        if (joinedResult.error) {
+            return {
+                rows: [] as Record<string, unknown>[],
+                source: 'none' as const,
+                message:
+                    'Rental orders not detectable (orders type/module columns missing and merchant join failed)',
+            };
+        }
+
+        const rentalish = ((joinedResult.data || []) as Record<string, unknown>[]).filter((o) => {
+            const m = o.merchant as { type?: string } | null;
+            const t = String(m?.type || '').toLowerCase();
+            return t.includes('rental') || t.includes('automotive') || t === 'services';
+        });
+
+        if (rentalish.length > 0) {
+            return { rows: rentalish, source: 'merchant.type' as const };
+        }
+
+        return {
+            rows: [],
+            source: 'none' as const,
+            message:
+                'No rental orders found. Live orders have no module/type column; add orders.module or rental merchant types to enable rental reports.',
+        };
+    }
+
+    private mapRentalOrderRows(
+        data: Record<string, unknown>[],
+        opts?: { labelAsRentalOrders?: boolean },
+    ) {
+        return data.map((o, i) => {
+            const provider = merchantName(o);
+            const amount = orderTotal(o);
+            const id = o.order_number ?? o.id;
+            return {
+                sl: i + 1,
+                trip_id: id,
+                tripId: id,
+                order_id: id,
+                orderId: id,
+                id: o.id,
+                provider,
+                provider_name: provider,
+                amount,
+                total_amount: amount,
+                payment_status: o.payment_status ?? '—',
+                paymentStatus: o.payment_status ?? '—',
+                completed_amount: ['delivered', 'completed'].includes(orderStatus(o).toLowerCase())
+                    ? amount
+                    : 0,
+                admin_earning: amount * 0.1,
+                provider_earning: amount * 0.9,
+                action: '',
+                created_at: o.created_at,
+                ...(opts?.labelAsRentalOrders ? { source_label: 'rental_order' } : {}),
+            };
+        });
+    }
+
     async getRentalTransactionReport(dateFrom?: string, dateTo?: string) {
         try {
-            let query = supabase
-                .from('orders')
-                .select(`
-                    id, order_number, status, payment_status, total_amount, total_price,
-                    created_at, merchant_id, type, module,
-                    merchant:merchants!orders_merchant_id_fkey(id, name, type)
-                `)
-                .or('type.eq.rental,module.eq.rental')
-                .order('created_at', { ascending: false })
-                .limit(2000);
-
-            query = applyDateRange(query, dateFrom, dateTo);
-
-            const { data, error } = await query;
-            if (error) {
-                return emptyList(
-                    'Rental transactions not detectable (orders type/module columns may be missing)',
-                );
+            const fetched = await this.fetchRentalOrders(dateFrom, dateTo);
+            if (!fetched.rows.length) {
+                return emptyList(fetched.message || 'No rental orders found');
             }
-
-            if (!data?.length) {
-                return emptyList('No rental orders found');
-            }
-
-            const rows = data.map((o: Record<string, unknown>, i: number) => {
-                const provider = merchantName(o);
-                const amount = orderTotal(o);
-                return {
-                    sl: i + 1,
-                    trip_id: o.order_number ?? o.id,
-                    tripId: o.order_number ?? o.id,
-                    id: o.id,
-                    provider,
-                    provider_name: provider,
-                    amount,
-                    total_amount: amount,
-                    payment_status: o.payment_status ?? '—',
-                    paymentStatus: o.payment_status ?? '—',
-                    completed_amount: ['delivered', 'completed'].includes(orderStatus(o).toLowerCase())
-                        ? amount
-                        : 0,
-                    admin_earning: amount * 0.1,
-                    provider_earning: amount * 0.9,
-                    action: '',
-                    created_at: o.created_at,
-                };
-            });
-            return { success: true, data: rows };
+            return {
+                success: true,
+                data: this.mapRentalOrderRows(fetched.rows),
+                message:
+                    fetched.source === 'merchant.type'
+                        ? 'Showing orders from rental-like merchant types (orders.module not available).'
+                        : undefined,
+            };
         } catch (e: any) {
             return emptyList(e?.message || 'Failed to build rental transaction report');
         }
@@ -845,26 +1124,33 @@ export class AdminTransactionsService {
 
     async getRentalVehicleReport() {
         try {
-            const { data, error } = await supabase
-                .from('vehicles')
-                .select('*')
-                .order('created_at', { ascending: false })
-                .limit(2000);
+            const vehicles = await getKvList('rental_vehicles');
+            const providers = await getKvList('rental_providers');
+            const providerName = (id: unknown) => {
+                const p = providers.find((x) => String(x.id) === String(id));
+                return p ? String(p.name || p.company || id) : '—';
+            };
 
-            if (error) {
-                return emptyList('vehicles table not available yet');
+            if (vehicles.length === 0) {
+                return emptyList(
+                    'No rental vehicles in admin settings yet. Fleet data is stored in rental_vehicles KV (not a SQL vehicles table).',
+                );
             }
 
-            const rows = (data || []).map((raw, i) => {
-                const r = raw as Record<string, unknown>;
+            const rows = vehicles.map((r, i) => {
+                const name = String(r.name ?? r.vehicle_name ?? r.model ?? r.registration_no ?? r.id ?? '—');
+                const trips = num(r.trips ?? r.trip_count);
+                const earning = num(r.earning ?? r.total_earning ?? r.earnings);
                 return {
                     sl: i + 1,
-                    vehicle: String(r.name ?? r.vehicle_name ?? r.model ?? r.plate_number ?? r.id ?? '—'),
-                    vehicle_name: r.name ?? r.vehicle_name,
-                    trips: num(r.trips ?? r.trip_count),
-                    trip_count: num(r.trips ?? r.trip_count),
-                    earning: num(r.earning ?? r.total_earning ?? r.earnings),
-                    total_earning: num(r.earning ?? r.total_earning ?? r.earnings),
+                    vehicle: name,
+                    vehicle_name: name,
+                    provider: providerName(r.provider_id),
+                    trips,
+                    trip_count: trips,
+                    earning,
+                    total_earning: earning,
+                    status: String(r.status ?? '—'),
                     action: '',
                 };
             });
@@ -878,15 +1164,10 @@ export class AdminTransactionsService {
         try {
             const txn = await this.getRentalTransactionReport(dateFrom, dateTo);
             if (!txn.success || !Array.isArray(txn.data) || txn.data.length === 0) {
-                return emptyList(
-                    (txn as EmptyList).message || 'No rental provider data available',
-                );
+                return emptyList((txn as EmptyList).message || 'No rental provider data available');
             }
 
-            const map: Record<
-                string,
-                { provider: string; total_amount: number; trips: number }
-            > = {};
+            const map: Record<string, { provider: string; total_amount: number; trips: number }> = {};
             for (const raw of txn.data as Record<string, unknown>[]) {
                 const key = String(raw.provider ?? raw.provider_name ?? 'unknown');
                 if (!map[key]) map[key] = { provider: key, total_amount: 0, trips: 0 };
@@ -900,9 +1181,15 @@ export class AdminTransactionsService {
                 total_amount: r.total_amount,
                 totalAmount: r.total_amount,
                 trips: r.trips,
+                total_trips: r.trips,
+                totalTrips: r.trips,
                 action: '',
             }));
-            return { success: true, data: rows };
+            return {
+                success: true,
+                data: rows,
+                message: (txn as { message?: string }).message,
+            };
         } catch (e: any) {
             return emptyList(e?.message || 'Failed to build provider-wise report');
         }
@@ -927,8 +1214,8 @@ export class AdminTransactionsService {
                         trip_id: r.trip_number ?? r.id,
                         tripId: r.trip_number ?? r.id,
                         provider: String(r.provider_name ?? r.provider ?? r.merchant_name ?? '—'),
-                        amount: num(r.amount ?? r.total_amount ?? r.fare),
-                        total_amount: num(r.amount ?? r.total_amount ?? r.fare),
+                        amount: num(r.amount ?? r.total_amount ?? r.fare ?? r.total_price),
+                        total_amount: num(r.amount ?? r.total_amount ?? r.fare ?? r.total_price),
                         payment_status: r.payment_status ?? '—',
                         paymentStatus: r.payment_status ?? '—',
                         action: '',
@@ -938,8 +1225,20 @@ export class AdminTransactionsService {
                 return { success: true, data: rows };
             }
 
-            // Fallback: rental-filtered orders as trip rows
-            return this.getRentalTransactionReport(dateFrom, dateTo);
+            // Fallback: rental orders, clearly labeled as rental orders (not trips)
+            const fetched = await this.fetchRentalOrders(dateFrom, dateTo);
+            if (!fetched.rows.length) {
+                return emptyList(
+                    fetched.message ||
+                        'No rental orders available for trip report (trips table not present).',
+                );
+            }
+            return {
+                success: true,
+                data: this.mapRentalOrderRows(fetched.rows, { labelAsRentalOrders: true }),
+                message:
+                    'Showing rental orders (no trips table). Columns labeled Trip ID refer to order numbers.',
+            };
         } catch (e: any) {
             return emptyList(e?.message || 'Failed to build trip report');
         }

@@ -60,37 +60,56 @@ const PAIR_COLORS = [
 
 type MerchantType = string | null | undefined;
 
+const COMMERCIAL_MODULE_KEYS = new Set([
+    'supermarket_groceries',
+    'food_restaurant',
+    'bakery_confectionery',
+    'pharmacy_healthcare',
+    'beauty_personal_care',
+    'fashion_clothing',
+    'shoes_bags',
+    'jewellery_accessories',
+    'electronics_gadgets',
+    'phones_computers',
+    'home_living',
+    'baby_kids',
+    'sports_fitness',
+    'books_stationery',
+    'automotive',
+    'hardware_building',
+    'agriculture_farm_supplies',
+    'pet_supplies',
+    'gifts_speciality',
+    'alcohol_beverages',
+    'office_business_supplies',
+    'local_specialty_products',
+    'services',
+    'wholesale_bulk',
+    'other',
+]);
+
+/**
+ * Map merchants.type → Feature 27 dispatch category key (module id).
+ * Legacy grocery/restaurant/pharmacy/store remapped to canonical keys.
+ */
 function resolveModuleKey(merchantType: MerchantType): string {
-    const type = String(merchantType || '').toLowerCase();
+    const type = String(merchantType || '').toLowerCase().trim();
+    if (!type) return 'other';
     if (type.includes('parcel')) return 'parcel';
+    if (type.includes('rental')) return 'other';
 
-    // New 25-category taxonomy → dispatch grouping buckets.
-    if (type === 'supermarket_groceries' || type.includes('grocery')) return 'grocery';
-    if (type === 'pharmacy_healthcare' || type.includes('pharmacy')) return 'pharmacy';
-    if (
-        type === 'food_restaurant' ||
-        type === 'bakery_confectionery' ||
-        type === 'alcohol_beverages' ||
-        type.includes('food') ||
-        type.includes('restaurant')
-    ) {
-        return 'food';
+    if (COMMERCIAL_MODULE_KEYS.has(type)) return type;
+
+    // Pre-migration compatibility.
+    if (type === 'grocery' || type.includes('grocery')) return 'supermarket_groceries';
+    if (type === 'restaurant' || type.includes('restaurant') || type.includes('food')) {
+        return 'food_restaurant';
     }
+    if (type === 'pharmacy' || type.includes('pharmacy')) return 'pharmacy_healthcare';
+    if (type === 'store' || type.includes('shop')) return 'other';
 
-    // Legacy `store` treated as a generic shop.
-    if (type.includes('shop') || type === 'store') return 'shop';
-
-    // Everything else (beauty, fashion, electronics, etc.) is dispatched as "shop".
-    return 'shop';
+    return 'other';
 }
-
-const MODULE_TO_CATEGORY: Record<string, string> = {
-    grocery: '1',
-    pharmacy: '2',
-    shop: '3',
-    food: '4',
-    parcel: '5',
-};
 
 function emptyCategoryCounts() {
     return {
@@ -340,13 +359,13 @@ export class AdminDispatchService {
     }
 
     async getCounts() {
+        // Feature 27: byCategory keyed by module id (e.g. food_restaurant, parcel).
         const byCategory: Record<string, ReturnType<typeof emptyCategoryCounts>> = {
-            '1': emptyCategoryCounts(),
-            '2': emptyCategoryCounts(),
-            '3': emptyCategoryCounts(),
-            '4': emptyCategoryCounts(),
-            '5': emptyCategoryCounts(),
+            parcel: emptyCategoryCounts(),
         };
+        for (const key of COMMERCIAL_MODULE_KEYS) {
+            byCategory[key] = emptyCategoryCounts();
+        }
 
         const bump = (
             categoryId: string,
@@ -387,21 +406,18 @@ export class AdminDispatchService {
         }
 
         for (const row of u.data || []) {
-            const moduleKey = resolveModuleKey((row as any).merchant?.type);
-            const cat = MODULE_TO_CATEGORY[moduleKey] || '1';
+            const cat = resolveModuleKey((row as any).merchant?.type);
             bump(cat, 'unassigned');
         }
 
         for (const row of a.data || []) {
-            const moduleKey = resolveModuleKey((row as any).merchant?.type);
-            const cat = MODULE_TO_CATEGORY[moduleKey] || '1';
+            const cat = resolveModuleKey((row as any).merchant?.type);
             bump(cat, 'accepted');
             bump(cat, 'ongoing');
         }
 
         for (const row of o.data || []) {
-            const moduleKey = resolveModuleKey((row as any).merchant?.type);
-            const cat = MODULE_TO_CATEGORY[moduleKey] || '1';
+            const cat = resolveModuleKey((row as any).merchant?.type);
             bump(cat, 'outForDelivery');
             bump(cat, 'ongoing');
         }

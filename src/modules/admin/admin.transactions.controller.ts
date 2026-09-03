@@ -109,8 +109,9 @@ export class AdminTransactionsController {
         return res.status(result.success ? 200 : 500).json(result);
     }
 
-    async getItemWiseReport(_req: Request, res: Response) {
-        const result = await service.getItemWiseReport();
+    async getItemWiseReport(req: Request, res: Response) {
+        const { from, to } = dateRangeFromQuery(req.query);
+        const result = await service.getItemWiseReport(from, to);
         return res.status(result.success ? 200 : 500).json(result);
     }
 

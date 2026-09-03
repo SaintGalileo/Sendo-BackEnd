@@ -37,7 +37,7 @@ const DEFAULT_FCM_CONFIG = {
 };
 
 const DEFAULT_FCM_MESSAGES = {
-    module_type: 'grocery',
+    module_type: 'supermarket_groceries',
     messages: {} as Record<string, Record<string, { enabled: boolean; text: string }>>,
 };
 

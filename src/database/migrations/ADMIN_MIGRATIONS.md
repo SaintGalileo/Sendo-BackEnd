@@ -131,3 +131,26 @@ If any are missing, apply older migrations under `src/database/migrations/` (ord
 2. Set `BACKEND_URL` on Vercel (Sendo-v2) pointing at Render/hosted API.
 3. Set `ALLOW_ADMIN_REGISTRATION=true` only if you want open admin signup after bootstrap.
 4. Smoke-test: create unit → create courier → record courier earning → add withdraw method → bulk-import one merchant row.
+
+---
+
+## Transactions reports (schema inventory — Sep 2026)
+
+Live PostgREST probe results and report status:
+
+| Report | Source | Status |
+|--------|--------|--------|
+| Day-wise | `orders.total_price`, `delivery_fee` | Fixable now |
+| Item-wise | `order_items` (`product_id`,`quantity`,`price`) + `products` | Fixable now |
+| Store-wise | `orders` + `merchants` | Fixable now |
+| Order | `orders.total_price` | Fixable now |
+| Expense | `transactions` ledger debits | Honest empty / ledger label |
+| Disbursement | `disbursements` **missing** | Honest empty — **no migration yet** (Business Management write path first) |
+| Vendor VAT | `orders` + merchants; **no** `tax_*` columns | Rows with tax=0 + message |
+| Parcel tax | merchant type / module filter | Empty until parcel merchants exist |
+| Tax export | client CSV from tax APIs | Implemented (no dedicated export endpoint) |
+| Rental transaction / provider / trip | no `orders.module`/`type`; no `trips` | Empty + message; trip UI labeled as rental orders |
+| Vehicle | `admin_settings.rental_vehicles` KV | Fixable when fleet data exists |
+
+**Phase 5 decision:** do **not** add `disbursements` / `vehicles` / `trips` / tax columns in this pass. Prefer honest empties. Optional later: `orders.module TEXT`, `orders.tax_amount NUMERIC` if product wants rental/tax filtering without merchant-type heuristics.
+
