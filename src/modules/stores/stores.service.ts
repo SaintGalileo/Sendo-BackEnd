@@ -36,6 +36,7 @@ export class StoresService {
         let query = supabase
             .from('merchants')
             .select('*', { count: 'exact' })
+            .or('verification_status.eq.verified,verified.eq.true,status.eq.verified')
             .not('status', 'in', '("suspended","banned","deleted","rejected")');
 
         if (filters.type) {
@@ -105,6 +106,7 @@ export class StoresService {
         let query = supabase
             .from('merchants')
             .select('*', { count: 'exact' })
+            .or('verification_status.eq.verified,verified.eq.true,status.eq.verified')
             .not('status', 'in', '("suspended","banned","deleted","rejected")');
 
         if (type) {
@@ -168,6 +170,11 @@ export class StoresService {
             .single();
 
         if (error) throw new Error(error.message);
+
+        const isVerified = data?.verification_status === 'verified' || data?.verified === true || data?.status === 'verified';
+        if (!data || !isVerified) {
+            throw new Error('Store is not verified or currently unavailable.');
+        }
 
         const isAvailable = isMerchantAvailable(data);
         return {
