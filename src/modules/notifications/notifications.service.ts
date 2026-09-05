@@ -96,8 +96,90 @@ export class NotificationsService {
 
             return response;
         } catch (error: any) {
-            console.error(`[Push] Error sending notification to user ${userId}:`, error.message);
+            console.error(`[Push] Error sending push notification to user ${userId}:`, error.message);
+            return null;
+        }
+    }
+
+    async registerMerchantPushId(merchantId: string, pushId: string) {
+        const { data, error } = await supabase
+            .from('merchants')
+            .update({ push_id: pushId })
+            .eq('id', merchantId)
+            .select()
+            .single();
+
+        if (error) {
+            console.warn('[registerMerchantPushId] Update error:', error.message);
+            throw new Error(error.message);
+        }
+        return data;
+    }
+
+    async sendPushNotificationToMerchant(merchantId: string, title: string, body: string, data?: any) {
+        try {
+            // 1. Fetch push_id and user_id from merchants table
+            const { data: store, error: sErr } = await supabase
+                .from('merchants')
+                .select('push_id, user_id, name')
+                .eq('id', merchantId)
+                .single();
+
+            if (sErr || !store) {
+                console.warn(`[Push to Merchant] Store ${merchantId} not found:`, sErr?.message);
+                return null;
+            }
+
+            let pushToken = store.push_id;
+
+            // Fallback to merchant owner's user fcm_token if merchant.push_id is not set
+            if (!pushToken && store.user_id) {
+                const { data: user } = await supabase
+                    .from('users')
+                    .select('fcm_token')
+                    .eq('id', store.user_id)
+                    .single();
+                pushToken = user?.fcm_token;
+            }
+
+            if (!pushToken) {
+                console.warn(`[Push to Merchant] No push_id or FCM token found for store ${merchantId} (${store.name})`);
+                return null;
+            }
+
+            // 2. Prepare message
+            const message = {
+                notification: {
+                    title,
+                    body,
+                },
+                data: {
+                    merchantId: String(merchantId),
+                    ...(data || {}),
+                },
+                token: pushToken,
+            };
+
+            // 3. Send via Firebase
+            const response = await messaging.send(message);
+            console.log(`[Push to Merchant] Successfully sent push notification to merchant ${store.name} (${merchantId}):`, response);
+
+            // 4. Optionally log to notifications table
+            if (store.user_id) {
+                await supabase.from('notifications').insert([{
+                    user_id: store.user_id,
+                    title,
+                    message: body,
+                    type: 'merchant_push',
+                    is_read: false
+                }]);
+            }
+
+            return response;
+        } catch (error: any) {
+            console.error(`[Push to Merchant] Error sending notification to merchant ${merchantId}:`, error.message);
             return null;
         }
     }
 }
+

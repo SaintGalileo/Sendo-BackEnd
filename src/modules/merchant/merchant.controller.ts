@@ -814,7 +814,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             if (!result.success || !result.data) {
                 return sendResponse(res, 404, false, 'Merchant store not found');
@@ -826,5 +826,31 @@ export class MerchantController {
             return sendResponse(res, 500, false, error.message);
         }
     }
+
+    // --- Device Push ID Registration ---
+    async updatePushId(req: AuthRequest, res: Response) {
+        try {
+            const pushId = req.body.pushId || req.body.push_id || req.body.token;
+            if (!pushId) {
+                return sendResponse(res, 400, false, 'pushId is required');
+            }
+
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                getMerchantIdFromReq(req),
+            );
+            if (!result.success || !result.data) {
+                return sendResponse(res, 404, false, 'Merchant store not found');
+            }
+
+            const updated = await merchantService.updateStore(result.data.id, { push_id: String(pushId).trim() });
+            return sendResponse(res, 200, true, 'Merchant push_id updated successfully', updated);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
 }
+
 

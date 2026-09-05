@@ -72,5 +72,10 @@ router.post('/withdraw/initiate', merchantController.initiateWithdrawal);
 router.post('/withdraw/confirm', merchantController.confirmWithdrawal);
 router.get('/withdrawals', merchantController.getWithdrawals);
 
+// Push ID registration
+router.post('/push-id', merchantController.updatePushId);
+router.put('/push-id', merchantController.updatePushId);
+
 export default router;
+
 

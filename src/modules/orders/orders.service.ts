@@ -189,20 +189,12 @@ export class OrdersService {
 
         // 7. Send Push Notification to Merchant
         try {
-            const { data: merchantUser } = await supabase
-                .from('merchants')
-                .select('user_id')
-                .eq('id', merchantId)
-                .single();
-
-            if (merchantUser?.user_id) {
-                await notificationsService.sendPushNotification(
-                    merchantUser.user_id,
-                    'New Order Received!',
-                    `You have a new order (#${order.id.toString().slice(0, 8)}) for NGN ${order.total_price}`,
-                    { orderId: order.id, type: 'new_order' }
-                );
-            }
+            await notificationsService.sendPushNotificationToMerchant(
+                merchantId,
+                'New Order Received!',
+                `You have a new order (#${order.id.toString().slice(0, 8)}) for NGN ${order.total_price}`,
+                { orderId: order.id, type: 'new_order' }
+            );
         } catch (pushError: any) {
             console.error('[OrdersService] Failed to send push notification:', pushError.message);
         }
@@ -437,8 +429,8 @@ export class OrdersService {
                         message: notifyMessage,
                     });
 
-                    await notificationsService.sendPushNotification(
-                        merchantStore.user_id,
+                    await notificationsService.sendPushNotificationToMerchant(
+                        data.merchant_id,
                         'Payout Credited!',
                         notifyMessage,
                         { type: 'EARNING_CREDITED', orderId: data.id }

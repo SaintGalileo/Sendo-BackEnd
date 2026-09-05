@@ -342,8 +342,8 @@ export class CourierService {
                     message: notifyMessage,
                 });
 
-                await this.notificationsService.sendPushNotification(
-                    merchantStore.user_id,
+                await this.notificationsService.sendPushNotificationToMerchant(
+                    data.merchant_id,
                     'Payout Credited!',
                     notifyMessage,
                     { type: 'EARNING_CREDITED', orderId: data.id }
