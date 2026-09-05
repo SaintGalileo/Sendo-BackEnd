@@ -15,6 +15,17 @@ const earningsService = new MerchantEarningsService();
 const seerbitService = new SeerBitService();
 const allowedBusinessTypes = COMMERCIAL_MERCHANT_TYPES;
 
+function getMerchantIdFromReq(req: Request): string | undefined {
+    if (typeof req.query.merchantId === 'string' && req.query.merchantId.trim()) {
+        return req.query.merchantId.trim();
+    }
+    const headerVal = req.headers['x-merchant-id'] || req.headers['merchant-id'];
+    if (typeof headerVal === 'string' && headerVal.trim()) {
+        return headerVal.trim();
+    }
+    return undefined;
+}
+
 export class MerchantController {
     // --- Store Management ---
     async registerStore(req: Request, res: Response) {
@@ -123,9 +134,9 @@ export class MerchantController {
         try {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id as string;
-            const merchantId = typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined;
+            const merchantId = getMerchantIdFromReq(req);
             const result = await merchantService.getMerchantByUserId(userId, merchantId);
-            if (!result.success) return sendResponse(res, 404, false, result.message || 'Error fetching store');
+            if (!result.success) return sendResponse(res, 404, false, result.message || 'Error fetching store', { code: result.code, merchants: result.merchants });
             return sendResponse(res, 200, true, 'Store fetched', result.data);
         } catch (error: any) {
             return sendResponse(res, 500, false, error.message);
@@ -136,10 +147,7 @@ export class MerchantController {
         try {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id as string;
-            const result = await merchantService.getMerchantByUserId(
-                userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
-            );
+            const result = await merchantService.getMerchantByUserId(userId, getMerchantIdFromReq(req));
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
             const store = await merchantService.updateStore(result.data.id, req.body);
@@ -162,10 +170,7 @@ export class MerchantController {
 
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const userId = req.user.id;
-            const result = await merchantService.getMerchantByUserId(
-                userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
-            );
+            const result = await merchantService.getMerchantByUserId(userId, getMerchantIdFromReq(req));
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
             const store = await merchantService.updateStatus(result.data.id, status);
