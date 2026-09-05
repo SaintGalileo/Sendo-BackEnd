@@ -58,4 +58,19 @@ router.put('/orders/:id/status', merchantController.updateOrderStatus);
 // Earnings
 router.get('/earnings', merchantController.getEarnings);
 
+// Payout Account (SeerBit)
+router.get('/banks', merchantController.getBanks);
+router.post('/payout-account/resolve', merchantController.resolvePayoutAccount);
+router.post('/payout-account', merchantController.savePayoutAccount);
+
+// Verification (KYC)
+router.post('/verification', merchantController.submitVerification);
+router.get('/verification', merchantController.getVerificationStatus);
+
+// Withdrawals
+router.post('/withdraw/initiate', merchantController.initiateWithdrawal);
+router.post('/withdraw/confirm', merchantController.confirmWithdrawal);
+router.get('/withdrawals', merchantController.getWithdrawals);
+
 export default router;
+

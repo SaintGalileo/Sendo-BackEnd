@@ -3,6 +3,7 @@ import { OrderStatus } from '../../common/constants/orderStatus';
 import { SocketService } from '../notifications/socket.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MerchantEarningsService } from '../merchant/earnings.service';
+import { UtilityService } from '../utility/utility.service';
 
 type DeliveryBucket = 'ongoing' | 'completed' | 'cancelled';
 type CourierDeliveryOrder = Record<string, any>;
@@ -16,6 +17,7 @@ export class CourierService {
     private readonly socketService = SocketService.getInstance();
     private readonly notificationsService = new NotificationsService();
     private readonly merchantEarningsService = new MerchantEarningsService();
+    private readonly utilityService = new UtilityService();
     private readonly courierOrderSelect =
         '*, merchant:merchants(*), address:addresses(*), consumer:users!consumer_id(id, first_name, last_name, phone, email), items:order_items(*, product:products(*)), courier:couriers(*, user:users(*))';
     
@@ -315,10 +317,38 @@ export class CourierService {
         // If delivered, calculate earnings
         if (status === OrderStatus.DELIVERED && existingOrder?.status !== OrderStatus.DELIVERED) {
             await this.addEarning(profile.id, data.delivery_fee * 0.8, orderId); // Assuming courier gets 80%
-            const commissionRate = 0.10;
+            const percentage = await this.utilityService.getCommissionPercentage();
+            const commissionRate = percentage / 100;
             const subtotal = Number(data.subtotal || 0);
-            const merchantShare = subtotal * (1 - commissionRate);
+            const commissionAmount = subtotal * commissionRate;
+            const merchantShare = subtotal - commissionAmount;
+
             await this.merchantEarningsService.addEarning(data.merchant_id, merchantShare);
+
+            const { data: merchantStore } = await supabase
+                .from('merchants')
+                .select('user_id, name')
+                .eq('id', data.merchant_id)
+                .single();
+
+            if (merchantStore && merchantStore.user_id) {
+                const notifyMessage = `Customer bought items worth ₦${subtotal.toLocaleString()}. Platform fee (${percentage}%): ₦${commissionAmount.toLocaleString()}. ₦${merchantShare.toLocaleString()} credited to your balance.`;
+
+                this.socketService.emitToUser(merchantStore.user_id, 'merchant_earning_credited', {
+                    subtotal,
+                    commissionPercentage: percentage,
+                    commissionAmount,
+                    merchantShare,
+                    message: notifyMessage,
+                });
+
+                await this.notificationsService.sendPushNotification(
+                    merchantStore.user_id,
+                    'Payout Credited!',
+                    notifyMessage,
+                    { type: 'EARNING_CREDITED', orderId: data.id }
+                );
+            }
         }
 
         return data;

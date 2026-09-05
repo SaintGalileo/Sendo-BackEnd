@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { MerchantOnboardingService } from './merchant.service';
 import { OrdersService } from '../orders/orders.service';
 import { MerchantEarningsService } from './earnings.service';
+import { SeerBitService } from '../payments/seerbit.service';
 import { OrderStatus } from '../../common/constants/orderStatus';
 import { AuthRequest } from '../../common/middleware/auth.middleware';
 import { sendResponse } from '../../common/utils/response';
@@ -11,6 +12,7 @@ import { COMMERCIAL_MERCHANT_TYPES, type MerchantType } from '../admin/moduleMer
 const merchantService = new MerchantOnboardingService();
 const ordersService = new OrdersService();
 const earningsService = new MerchantEarningsService();
+const seerbitService = new SeerBitService();
 const allowedBusinessTypes = COMMERCIAL_MERCHANT_TYPES;
 
 export class MerchantController {
@@ -642,4 +644,182 @@ export class MerchantController {
             return sendResponse(res, 500, false, error.message);
         }
     }
+
+    // --- Payout Account Settings ---
+    async getBanks(req: Request, res: Response) {
+        try {
+            const banks = await seerbitService.getBanks();
+            return sendResponse(res, 200, true, 'Banks fetched successfully', banks);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async resolvePayoutAccount(req: Request, res: Response) {
+        try {
+            const { accountNumber, bankCode } = req.body;
+            if (!accountNumber || !bankCode) {
+                return sendResponse(res, 400, false, 'Account number and bank code are required');
+            }
+
+            const resolved = await seerbitService.resolveAccount(accountNumber.toString().trim(), bankCode.toString().trim());
+
+            if (!resolved) {
+                return sendResponse(res, 400, false, 'Could not resolve bank account details. Please check the account number and bank.');
+            }
+
+            return sendResponse(res, 200, true, 'Account resolved successfully', resolved);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async savePayoutAccount(req: AuthRequest, res: Response) {
+        try {
+            const { accountNumber, bankCode, bankName, accountName } = req.body;
+
+            if (!accountNumber || !bankCode || !bankName || !accountName) {
+                return sendResponse(res, 400, false, 'All payout account details are required');
+            }
+
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
+            if (!result.success || !result.data) {
+                return sendResponse(res, 404, false, 'Merchant store not found');
+            }
+
+            const updatedStore = await merchantService.savePayoutAccount(result.data.id, {
+                accountNumber: accountNumber.toString().trim(),
+                bankCode: bankCode.toString().trim(),
+                bankName: bankName.toString().trim(),
+                accountName: accountName.toString().trim(),
+            });
+
+            return sendResponse(res, 200, true, 'Payout account saved successfully', updatedStore);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    // --- Verification (KYC) ---
+    async submitVerification(req: AuthRequest, res: Response) {
+        try {
+            const { isCacRegistered, cacRcNumber, idNumber } = req.body;
+            if (isCacRegistered && !cacRcNumber) {
+                return sendResponse(res, 400, false, 'CAC RC registration number is required for registered businesses');
+            }
+            if (!isCacRegistered && !idNumber) {
+                return sendResponse(res, 400, false, 'Government ID number (NIN/BVN) is required for individual vendors');
+            }
+
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
+            if (!result.success || !result.data) {
+                return sendResponse(res, 404, false, 'Merchant store not found');
+            }
+
+            const updatedStore = await merchantService.submitVerification(result.data.id, userId, req.body);
+            return sendResponse(res, 200, true, 'Verification submitted successfully. Account is under review.', updatedStore);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async getVerificationStatus(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
+            if (!result.success || !result.data) {
+                return sendResponse(res, 404, false, 'Merchant store not found');
+            }
+
+            const status = await merchantService.getVerificationStatus(result.data.id);
+            return sendResponse(res, 200, true, 'Verification status retrieved', status);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    // --- Withdrawals ---
+    async initiateWithdrawal(req: AuthRequest, res: Response) {
+        try {
+            const { amount } = req.body;
+            const numAmount = parseFloat(amount);
+            if (isNaN(numAmount) || numAmount <= 0) {
+                return sendResponse(res, 400, false, 'Valid withdrawal amount is required');
+            }
+
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
+            if (!result.success || !result.data) {
+                return sendResponse(res, 404, false, 'Merchant store not found');
+            }
+
+            const initRes = await merchantService.initiateWithdrawal(result.data.id, userId, numAmount);
+            return sendResponse(res, 200, true, initRes.message, initRes);
+        } catch (error: any) {
+            return sendResponse(res, 400, false, error.message);
+        }
+    }
+
+    async confirmWithdrawal(req: AuthRequest, res: Response) {
+        try {
+            const { amount, otp } = req.body;
+            const numAmount = parseFloat(amount);
+            if (isNaN(numAmount) || numAmount <= 0 || !otp) {
+                return sendResponse(res, 400, false, 'Amount and verification OTP are required');
+            }
+
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
+            if (!result.success || !result.data) {
+                return sendResponse(res, 404, false, 'Merchant store not found');
+            }
+
+            const withdrawal = await merchantService.confirmWithdrawal(result.data.id, userId, numAmount, otp.toString());
+            return sendResponse(res, 200, true, 'Withdrawal request created successfully and is under processing', withdrawal);
+        } catch (error: any) {
+            return sendResponse(res, 400, false, error.message);
+        }
+    }
+
+    async getWithdrawals(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+            );
+            if (!result.success || !result.data) {
+                return sendResponse(res, 404, false, 'Merchant store not found');
+            }
+
+            const list = await merchantService.getWithdrawals(result.data.id);
+            return sendResponse(res, 200, true, 'Withdrawal requests retrieved', list);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
 }
+

@@ -1,10 +1,15 @@
 import { createHash } from 'crypto';
+import axios from 'axios';
 import { supabase } from '../../config/supabase';
 import { SocketService } from '../notifications/socket.service';
+import { EmailService } from '../notifications/email.service';
+import { MerchantEarningsService } from './earnings.service';
 import { OrderStatus } from '../../common/constants/orderStatus';
 import type { MerchantType } from '../admin/moduleMerchantTypes';
 
 const socketService = SocketService.getInstance();
+const emailService = new EmailService();
+const earningsService = new MerchantEarningsService();
 
 /** Stable UUID-shaped id for synthetic "Uncategorized" catalog buckets (not stored in DB). */
 function uncategorizedCategoryId(merchantId: string): string {
@@ -523,5 +528,282 @@ export class MerchantOnboardingService {
 
         if (error) throw new Error(error.message);
         return true;
+    }
+
+    // --- Payout Account Settings ---
+    async savePayoutAccount(merchantId: string, details: { accountNumber: string; bankCode: string; bankName: string; accountName: string }) {
+        const updatePayload: any = {
+            account_number: details.accountNumber,
+            bank_code: details.bankCode,
+            bank_name: details.bankName,
+            account_name: details.accountName,
+        };
+
+        const { data, error } = await supabase
+            .from('merchants')
+            .update(updatePayload)
+            .eq('id', merchantId)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('[savePayoutAccount] Supabase update error:', error.message);
+
+            // Attempt fallback update to metadata or payout_account JSON column if table lacks individual columns
+            try {
+                const { data: fallbackData, error: fallbackError } = await supabase
+                    .from('merchants')
+                    .update({
+                        payout_account: updatePayload,
+                    })
+                    .eq('id', merchantId)
+                    .select()
+                    .single();
+
+                if (!fallbackError && fallbackData) {
+                    return {
+                        ...fallbackData,
+                        account_number: details.accountNumber,
+                        bank_code: details.bankCode,
+                        bank_name: details.bankName,
+                        account_name: details.accountName,
+                    };
+                }
+            } catch (fbErr: any) {
+                console.warn('[savePayoutAccount] Fallback error:', fbErr.message);
+            }
+
+            throw new Error(error.message);
+        }
+
+        return data;
+    }
+
+    // --- Verification (KYC) ---
+    async submitVerification(merchantId: string, userId: string, payload: any) {
+        const verificationPayload = {
+            merchant_id: merchantId,
+            user_id: userId,
+            id_type: payload.isCacRegistered ? 'CAC' : (payload.idType || 'NIN'),
+            id_number: payload.isCacRegistered ? (payload.cacRcNumber || '') : (payload.idNumber || ''),
+            is_cac_registered: !!payload.isCacRegistered,
+            cac_rc_number: payload.cacRcNumber || null,
+            business_legal_name: payload.businessLegalName || null,
+            has_physical_store: !!payload.hasPhysicalStore,
+            store_address: payload.storeAddress || null,
+            store_city: payload.storeCity || null,
+            store_state: payload.storeState || null,
+            landmark: payload.landmark || null,
+            storefront_photos: Array.isArray(payload.storefrontPhotos) ? payload.storefrontPhotos : (payload.storefrontPhotoUrl ? [payload.storefrontPhotoUrl] : []),
+            storefront_photo_url: payload.storefrontPhotoUrl || (Array.isArray(payload.storefrontPhotos) ? payload.storefrontPhotos[0] : null),
+            utility_bill_url: payload.utilityBillUrl || null,
+            status: 'pending',
+        };
+
+        try {
+            await supabase.from('merchant_verifications').insert([verificationPayload]);
+        } catch (e: any) {
+            console.warn('[submitVerification] Insert to merchant_verifications warning:', e.message);
+        }
+
+        const { data: updatedMerchant, error: mError } = await supabase
+            .from('merchants')
+            .update({
+                verification_status: 'pending',
+                status: 'pending_verification',
+                verification_requested_at: new Date().toISOString(),
+            })
+            .eq('id', merchantId)
+            .select()
+            .single();
+
+        if (mError) {
+            console.warn('[submitVerification] Merchant status update warning:', mError.message);
+        }
+
+        return updatedMerchant || { success: true };
+    }
+
+    async getVerificationStatus(merchantId: string) {
+        const { data: store } = await supabase
+            .from('merchants')
+            .select('verified, verification_status, status')
+            .eq('id', merchantId)
+            .single();
+
+        const { data: verification } = await supabase
+            .from('merchant_verifications')
+            .select('*')
+            .eq('merchant_id', merchantId)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+
+        const isVerified = store?.verified === true || store?.verification_status === 'verified' || store?.status === 'verified';
+        return {
+            verified: isVerified,
+            status: store?.verification_status || (isVerified ? 'verified' : (store?.status === 'pending_verification' ? 'pending' : 'unverified')),
+            verification: verification || null,
+        };
+    }
+
+    // --- Payout Withdrawals ---
+    async initiateWithdrawal(merchantId: string, userId: string, amount: number) {
+        const { data: store, error: storeError } = await supabase
+            .from('merchants')
+            .select('*')
+            .eq('id', merchantId)
+            .single();
+
+        if (storeError || !store) throw new Error('Merchant store not found');
+
+        const accountNumber = store.account_number || store.payout_account?.account_number;
+        const bankCode = store.bank_code || store.payout_account?.bank_code;
+        const bankName = store.bank_name || store.payout_account?.bank_name;
+        const accountName = store.account_name || store.payout_account?.account_name;
+
+        if (!accountNumber || !bankName) {
+            throw new Error('No payout bank account configured. Please add your payout account first.');
+        }
+
+        const earningsRes = await earningsService.getEarnings(merchantId);
+        const availableBalance = earningsRes.currentBalance || 0;
+
+        if (amount > availableBalance) {
+            throw new Error(`Insufficient wallet balance. Available balance: ₦${availableBalance.toLocaleString()}`);
+        }
+
+        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+        try {
+            await supabase.from('otps').insert([{
+                user_id: userId,
+                otp: otpCode,
+                expires_at: expiresAt,
+                type: 'withdrawal_otp'
+            }]);
+        } catch (otpErr) {
+            console.warn('[initiateWithdrawal] OTP insert warning:', otpErr);
+        }
+
+        const { data: user } = await supabase.from('users').select('email, phone, first_name').eq('id', userId).single();
+        const targetEmail = user?.email || store.contact_email;
+        const targetPhone = user?.phone || store.phone || store.contact_phone;
+
+        // 1. Send SMS via Termii
+        if (targetPhone) {
+            try {
+                const termiiApiKey = process.env.TERMII_API_KEY;
+                if (termiiApiKey) {
+                    const cleanPhone = targetPhone.startsWith('+')
+                        ? targetPhone.substring(1)
+                        : (targetPhone.startsWith('0') ? '234' + targetPhone.substring(1) : targetPhone);
+
+                    await axios.post('https://api.ng.termii.com/api/sms/send', {
+                        to: cleanPhone,
+                        from: process.env.TERMII_SENDER_ID || 'N-Alert',
+                        sms: `Your Sendo payout withdrawal verification code is ${otpCode}. Valid for 10 minutes.`,
+                        type: 'plain',
+                        channel: 'generic',
+                        api_key: termiiApiKey,
+                    });
+                    console.log(`[WITHDRAWAL SMS] OTP sent via Termii SMS to ${cleanPhone}`);
+                } else {
+                    console.warn(`[WITHDRAWAL SMS] TERMII_API_KEY missing. SMS logged: ${otpCode} for ${targetPhone}`);
+                }
+            } catch (smsErr: any) {
+                console.error('[WITHDRAWAL SMS] Termii error:', smsErr.response?.data || smsErr.message);
+            }
+        }
+
+        // 2. Send Email Notification
+        if (targetEmail) {
+            await emailService.sendEmail(
+                targetEmail,
+                'Sendo Payout Withdrawal Code',
+                `<p>Hello ${user?.first_name || store.name},</p><p>Your 6-digit verification code to confirm payout withdrawal of <b>₦${amount.toLocaleString()}</b> is:</p><h1 style="color: #fb272c;">${otpCode}</h1><p>Valid for 10 minutes. Do not share this code.</p>`
+            );
+        }
+
+        console.log(`[WITHDRAWAL OTP] Code generated for user ${userId} / merchant ${merchantId}: ${otpCode}`);
+
+        return {
+            success: true,
+            message: `Verification code sent via SMS to ${targetPhone || 'your phone number'} and email.`,
+            otpCode,
+            amount,
+            payoutAccount: {
+                accountNumber,
+                bankName,
+                accountName,
+            }
+        };
+    }
+
+    async confirmWithdrawal(merchantId: string, userId: string, amount: number, otpCode: string) {
+        const { data: otpRecords } = await supabase
+            .from('otps')
+            .select('*')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+        const latestOtp = otpRecords && otpRecords[0];
+        if (!latestOtp || latestOtp.otp !== otpCode.trim()) {
+            throw new Error('Invalid verification OTP code. Please check and try again.');
+        }
+
+        const { data: store } = await supabase
+            .from('merchants')
+            .select('*')
+            .eq('id', merchantId)
+            .single();
+
+        const accountNumber = store?.account_number || store?.payout_account?.account_number || '';
+        const bankCode = store?.bank_code || store?.payout_account?.bank_code || '';
+        const bankName = store?.bank_name || store?.payout_account?.bank_name || 'Bank';
+        const accountName = store?.account_name || store?.payout_account?.account_name || store?.name || 'Merchant';
+
+        const { data: withdrawal, error } = await supabase
+            .from('withdrawal_requests')
+            .insert([{
+                merchant_id: merchantId,
+                user_id: userId,
+                amount,
+                bank_name: bankName,
+                account_number: accountNumber,
+                account_name: accountName,
+                bank_code: bankCode,
+                status: 'pending',
+                otp_code: otpCode,
+            }])
+            .select()
+            .single();
+
+        if (error) {
+            console.error('[confirmWithdrawal] Error inserting withdrawal:', error.message);
+            throw new Error(error.message);
+        }
+
+        try {
+            await supabase.from('otps').delete().eq('id', latestOtp.id);
+        } catch (e) {}
+
+        return withdrawal;
+    }
+
+    async getWithdrawals(merchantId: string) {
+        const { data, error } = await supabase
+            .from('withdrawal_requests')
+            .select('*')
+            .eq('merchant_id', merchantId)
+            .order('created_at', { ascending: false });
+
+        if (error) {
+            console.warn('[getWithdrawals] Error fetching withdrawals:', error.message);
+            return [];
+        }
+        return data || [];
     }
 }

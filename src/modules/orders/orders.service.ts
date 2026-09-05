@@ -411,14 +411,39 @@ export class OrdersService {
         // --- Earnings Distribution ---
         if (status === OrderStatus.DELIVERED && existingOrder?.status !== OrderStatus.DELIVERED) {
             try {
-                // Calculation: Merchant gets subtotal minus platform commission (e.g., 10%)
-                // Delivery fee is excluded as it normally goes to the courier.
-                const commissionRate = 0.10; // 10% Platform Commission
+                const percentage = await utilityService.getCommissionPercentage();
+                const commissionRate = percentage / 100;
                 const subtotal = data.subtotal || 0;
-                const merchantShare = subtotal * (1 - commissionRate);
+                const commissionAmount = subtotal * commissionRate;
+                const merchantShare = subtotal - commissionAmount;
 
-                console.log(`[OrdersService] Distributing earnings for order ${orderId}: Subtotal=${subtotal}, MerchantShare=${merchantShare}`);
+                console.log(`[OrdersService] Distributing earnings for order ${orderId}: Subtotal=₦${subtotal}, Fee(${percentage}%)=₦${commissionAmount}, MerchantShare=₦${merchantShare}`);
                 await earningsService.addEarning(data.merchant_id, merchantShare);
+
+                const { data: merchantStore } = await supabase
+                    .from('merchants')
+                    .select('user_id, name')
+                    .eq('id', data.merchant_id)
+                    .single();
+
+                if (merchantStore && merchantStore.user_id) {
+                    const notifyMessage = `Customer bought items worth ₦${subtotal.toLocaleString()}. Platform fee (${percentage}%): ₦${commissionAmount.toLocaleString()}. ₦${merchantShare.toLocaleString()} credited to your balance.`;
+
+                    socketService.emitToUser(merchantStore.user_id, 'merchant_earning_credited', {
+                        subtotal,
+                        commissionPercentage: percentage,
+                        commissionAmount,
+                        merchantShare,
+                        message: notifyMessage,
+                    });
+
+                    await notificationsService.sendPushNotification(
+                        merchantStore.user_id,
+                        'Payout Credited!',
+                        notifyMessage,
+                        { type: 'EARNING_CREDITED', orderId: data.id }
+                    );
+                }
             } catch (earnError: any) {
                 console.error('[OrdersService] Failed to distribute merchant earnings:', earnError.message);
             }

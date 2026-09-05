@@ -48,4 +48,16 @@ export class MerchantEarningsService {
         // For now, return the current state
         return this.getOrCreateEarnings(merchantId);
     }
+
+    async getEarnings(merchantId: string) {
+        const earnings = await this.getOrCreateEarnings(merchantId);
+        return {
+            totalEarnings: Number(earnings.total_earnings || 0),
+            currentBalance: Number(earnings.current_balance || 0),
+            total_earnings: Number(earnings.total_earnings || 0),
+            current_balance: Number(earnings.current_balance || 0),
+            ...earnings,
+        };
+    }
 }
+

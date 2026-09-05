@@ -72,6 +72,34 @@ export class UtilityService {
         return this.getContactsAdmin();
     }
 
+    async getUtilityContact() {
+        try {
+            const all = await this.getAll();
+            return {
+                whatsapp_number: all.data.whatsapp_number || process.env.SUPPORT_WHATSAPP_NUMBER || '+2347040520952',
+                call_line: all.data.call_line || process.env.SUPPORT_CALL_LINE || '+2347040520952'
+            };
+        } catch (err: any) {
+            console.error('[UtilityService] Error in getUtilityContact:', err);
+            return {
+                whatsapp_number: process.env.SUPPORT_WHATSAPP_NUMBER || '+2347040520952',
+                call_line: process.env.SUPPORT_CALL_LINE || '+2347040520952'
+            };
+        }
+    }
+
+    async getCommissionPercentage(): Promise<number> {
+        try {
+            const all = await this.getAll();
+            const val = parseFloat(all.data.surge_percentage);
+            if (!isNaN(val) && val > 0) return val;
+            return 5;
+        } catch (err: any) {
+            console.error('[UtilityService] Error fetching commission percentage:', err);
+            return 5;
+        }
+    }
+
     async getSurgeCaps(): Promise<SurgeCaps> {
         const all = await this.getAll();
         const surge_price = Math.max(0, Number(all.data.surge_price) || 0);
