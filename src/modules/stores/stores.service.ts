@@ -8,6 +8,27 @@ function uncategorizedCategoryId(merchantId: string): string {
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
+const TYPE_ALIAS_MAP: Record<string, string[]> = {
+    restaurant: ['restaurant', 'food_restaurant', 'bakery_confectionery'],
+    food: ['restaurant', 'food_restaurant', 'bakery_confectionery'],
+    food_restaurant: ['restaurant', 'food_restaurant', 'bakery_confectionery'],
+    grocery: ['grocery', 'supermarket_groceries', 'agriculture_farm_supplies', 'local_specialty_products'],
+    groceries: ['grocery', 'supermarket_groceries', 'agriculture_farm_supplies', 'local_specialty_products'],
+    supermarket_groceries: ['grocery', 'supermarket_groceries', 'agriculture_farm_supplies', 'local_specialty_products'],
+    pharmacy: ['pharmacy', 'pharmacy_healthcare', 'beauty_personal_care'],
+    pharmacy_healthcare: ['pharmacy', 'pharmacy_healthcare', 'beauty_personal_care'],
+    store: ['store', 'other', 'general', ...COMMERCIAL_MERCHANT_TYPES],
+};
+
+function applyTypeFilter(query: any, type?: string) {
+    if (!type || type === 'all') return query;
+    const clean = type.toLowerCase().trim();
+    if (TYPE_ALIAS_MAP[clean]) {
+        return query.in('type', TYPE_ALIAS_MAP[clean]);
+    }
+    return query.eq('type', type);
+}
+
 export class StoresService {
     private readonly allowedStoreTypes = COMMERCIAL_MERCHANT_TYPES;
 
@@ -15,13 +36,10 @@ export class StoresService {
         let query = supabase
             .from('merchants')
             .select('*', { count: 'exact' })
-            .in('status', ['verified', 'active', 'approved']);
+            .not('status', 'in', '("suspended","banned","deleted","rejected")');
 
         if (filters.type) {
-            if (!(this.allowedStoreTypes as readonly string[]).includes(filters.type)) {
-                throw new Error(`Invalid store type: ${filters.type}`);
-            }
-            query = query.eq('type', filters.type);
+            query = applyTypeFilter(query, filters.type);
         }
 
         if (filters.rating) {
@@ -86,13 +104,11 @@ export class StoresService {
         // Fetch a pool of stores to shuffle
         let query = supabase
             .from('merchants')
-            .select('*', { count: 'exact' });
+            .select('*', { count: 'exact' })
+            .not('status', 'in', '("suspended","banned","deleted","rejected")');
 
         if (type) {
-            if (!(this.allowedStoreTypes as readonly string[]).includes(type)) {
-                throw new Error(`Invalid store type: ${type}`);
-            }
-            query = query.eq('type', type);
+            query = applyTypeFilter(query, type);
         }
 
         const { data, count, error } = await query.limit(100);
