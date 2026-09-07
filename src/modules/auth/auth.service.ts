@@ -102,7 +102,7 @@ export class AuthService {
         const registrationToken = jwt.sign(
             { phone, isRegistration: true },
             JWT_SECRET,
-            { expiresIn: '15m' }
+            { expiresIn: '1h' }
         );
 
         if (userError && userError.code === 'PGRST116') {
