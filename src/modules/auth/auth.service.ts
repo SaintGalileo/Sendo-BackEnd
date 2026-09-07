@@ -63,7 +63,7 @@ export class AuthService {
         }
     }
 
-    async verifyOTP(phone: string, otpCode: string, role?: string): Promise<{ success: boolean; message: string; data?: any; token?: string; isNewUser?: boolean; registrationToken?: string }> {
+    async verifyOTP(phone: string, otpCode: string, role?: string, addStore?: boolean): Promise<{ success: boolean; message: string; data?: any; token?: string; isNewUser?: boolean; registrationToken?: string }> {
         const isDefaultOTP = otpCode === '123456';
         let otpData: any = null;
 
@@ -139,7 +139,7 @@ export class AuthService {
             };
         }
 
-        if (role === 'merchant' && merchants.length === 0) {
+        if (role === 'merchant' && (merchants.length === 0 || addStore)) {
             return { 
                 success: true, 
                 message: 'OTP correct. Merchant registration required.', 
@@ -209,16 +209,44 @@ export class AuthService {
         }
     }
 
-    private generateAuthToken(userData: any) {
+    private generateAuthToken(userData: any, merchants: any[] = []) {
+        const roles = ['consumer'];
+        if (merchants.length > 0) roles.push('merchant');
+        const primaryRole = roles.includes('merchant') ? 'merchant' : (userData.role || 'consumer');
         return jwt.sign(
             {
                 id: userData.id,
                 phone: userData.phone,
-                role: userData.role,
+                role: primaryRole,
+                roles: roles
             },
             JWT_SECRET,
             { expiresIn: '30d' }
         );
+    }
+
+    async refreshRegistrationToken(userId: string): Promise<{ success: boolean; message: string; registrationToken?: string }> {
+        const { data: userData, error } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', userId)
+            .single();
+
+        if (error || !userData) {
+            return { success: false, message: 'User not found' };
+        }
+
+        const registrationToken = jwt.sign(
+            { phone: userData.phone, isRegistration: true },
+            JWT_SECRET,
+            { expiresIn: '24h' }
+        );
+
+        return {
+            success: true,
+            message: 'Registration token refreshed',
+            registrationToken
+        };
     }
 
     async registerConsumer(registrationToken: string, firstName: string, lastName: string, email?: string): Promise<{ success: boolean; message: string; data?: any; token?: string }> {
@@ -438,14 +466,29 @@ export class AuthService {
             return { success: false, message: `Failed to save merchant profile: ${merchantError.message}` };
         }
 
+        // Fetch ALL merchants for user_id to ensure complete list returned & roles populated correctly
+        const { data: allMerchants } = await supabase
+            .from('merchants')
+            .select('*')
+            .eq('user_id', userData.id);
+
+        const merchantsList = allMerchants || [merchantData];
+
+        const userToReturn = {
+            ...userData,
+            role: 'merchant',
+            roles: ['consumer', 'merchant']
+        };
+
         return {
             success: true,
             message: 'Merchant registration successful',
             data: {
-                user: userData,
-                merchant: merchantData
+                user: userToReturn,
+                merchant: merchantData,
+                merchants: merchantsList
             },
-            token: this.generateAuthToken(userData)
+            token: this.generateAuthToken(userToReturn, merchantsList)
         };
     }
 

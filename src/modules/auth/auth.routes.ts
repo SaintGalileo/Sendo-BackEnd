@@ -14,6 +14,7 @@ router.post('/register-consumer', authController.registerConsumer);
 router.post('/register-courier', authController.registerCourier);
 router.post('/register/rider', authController.registerCourier); // Alias for Rider app
 router.post('/register-merchant', authController.registerMerchant);
+router.post('/refresh-registration-token', authMiddleware, authController.refreshRegistrationToken);
 
 // Admin login (email + password)
 // Note: keep this route path stable because Sendo-v2 proxies it at /api/auth/admin/login.

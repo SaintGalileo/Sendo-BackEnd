@@ -18,7 +18,7 @@ export class AuthController {
     }
 
     async verifyOTP(req: Request, res: Response) {
-        const { phone, otpCode, role } = req.body || {};
+        const { phone, otpCode, role, addStore } = req.body || {};
 
         if (!phone || !otpCode) {
             return res.status(400).json({
@@ -27,7 +27,7 @@ export class AuthController {
             });
         }
 
-        const result = await authService.verifyOTP(phone, otpCode, role);
+        const result = await authService.verifyOTP(phone, otpCode, role, addStore);
         return res.status(result.success ? 200 : 401).json(result);
     }
 
@@ -232,5 +232,14 @@ export class AuthController {
 
         const result = await authService.verifyEmailOTP(email, otpCode, req.user?.id);
         return res.status(result.success ? 200 : 401).json(result);
+    }
+
+    async refreshRegistrationToken(req: AuthRequest, res: Response) {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ success: false, message: 'Unauthorized' });
+        }
+        const result = await authService.refreshRegistrationToken(userId);
+        return res.status(result.success ? 200 : 400).json(result);
     }
 }
