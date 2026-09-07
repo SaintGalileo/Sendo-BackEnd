@@ -202,22 +202,28 @@ export class SeerBitService {
                 }
             }
 
-            // 2. NIP Account Lookup (100% Reliable for all Nigerian Banks including OPay & UBA)
+            // 2. Paystack fallback (free Nigerian bank name lookup)
             try {
-                const lookupUrl = `https://api.monnify.com/api/v1/disbursements/account/validate?accountNumber=${cleanAccount}&bankCode=${cleanBankCode}`;
-                const nipResponse = await axios.get(lookupUrl, { timeout: 6000 }).catch(() => null);
+                const psKey = process.env.PAYSTACK_SECRET_KEY || '';
+                const psHeaders: any = { 'Content-Type': 'application/json' };
+                if (psKey) psHeaders['Authorization'] = `Bearer ${psKey}`;
 
-                if (nipResponse?.data?.requestSuccessful && nipResponse?.data?.responseBody?.accountName) {
-                    const resolvedName = nipResponse.data.responseBody.accountName.toString().trim();
-                    console.log(`[ACCOUNT RESOLVE] NIP Lookup Success: ${resolvedName} (${cleanAccount} - ${cleanBankCode})`);
+                const psResponse = await axios.get(
+                    `https://api.paystack.co/bank/resolve?account_number=${cleanAccount}&bank_code=${cleanBankCode}`,
+                    { headers: psHeaders, timeout: 6000 }
+                ).catch(() => null);
+
+                if (psResponse?.data?.status && psResponse?.data?.data?.account_name) {
+                    const resolvedName = psResponse.data.data.account_name.toString().trim();
+                    console.log(`[ACCOUNT RESOLVE] Paystack Success: ${resolvedName} (${cleanAccount} - ${cleanBankCode})`);
                     return {
                         accountName: resolvedName,
                         accountNumber: cleanAccount,
                         bankCode: cleanBankCode
                     };
                 }
-            } catch (nipErr: any) {
-                console.warn('[ACCOUNT RESOLVE] NIP lookup error:', nipErr.message);
+            } catch (psErr: any) {
+                console.warn('[ACCOUNT RESOLVE] Paystack fallback error:', psErr.message);
             }
 
             console.error(`[ACCOUNT RESOLVE] Could not resolve account ${cleanAccount} with bank code ${cleanBankCode}`);
