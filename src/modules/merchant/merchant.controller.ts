@@ -16,11 +16,11 @@ const seerbitService = new SeerBitService();
 const allowedBusinessTypes = COMMERCIAL_MERCHANT_TYPES;
 
 function getMerchantIdFromReq(req: Request): string | undefined {
-    if (typeof req.query.merchantId === 'string' && req.query.merchantId.trim()) {
+    if (typeof req.query.merchantId === 'string' && req.query.merchantId.trim() && req.query.merchantId.trim() !== 'undefined' && req.query.merchantId.trim() !== 'null') {
         return req.query.merchantId.trim();
     }
     const headerVal = req.headers['x-merchant-id'] || req.headers['merchant-id'];
-    if (typeof headerVal === 'string' && headerVal.trim()) {
+    if (typeof headerVal === 'string' && headerVal.trim() && headerVal.trim() !== 'undefined' && headerVal.trim() !== 'null') {
         return headerVal.trim();
     }
     return undefined;
@@ -187,7 +187,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
@@ -204,7 +204,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
@@ -224,7 +224,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
@@ -241,7 +241,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             const success = await merchantService.deleteCategory(result.data.id, req.params.id as string);
             return sendResponse(res, 200, true, 'Category deleted');
@@ -256,7 +256,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             const category = await merchantService.updateCategory(result.data.id, req.params.id as string, req.body);
             return sendResponse(res, 200, true, 'Category updated', category);
@@ -276,7 +276,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
@@ -302,7 +302,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             await merchantService.deleteProduct(result.data.id, req.params.id as string);
             return sendResponse(res, 200, true, 'Product deleted');
@@ -321,7 +321,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             const product = await merchantService.updateProductAvailability(result.data.id, req.params.id as string, is_available);
             return sendResponse(res, 200, true, 'Product availability updated', product);
@@ -337,8 +337,9 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
+            if (!result.success || !result.data) return sendResponse(res, 404, false, 'Merchant not found');
             const { status } = req.query;
             const pagination = getPaginationOptions(req.query);
             const orders = await merchantService.getOrders(result.data.id, pagination, status as string);
@@ -354,8 +355,9 @@ export class MerchantController {
             const userId = req.user.id as string;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
+            if (!result.success || !result.data) return sendResponse(res, 404, false, 'Merchant not found');
             const order = await merchantService.getOrderById(result.data.id, req.params.id as string);
             return sendResponse(res, 200, true, 'Order fetched', order);
         } catch (error: any) {
@@ -369,7 +371,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
@@ -393,7 +395,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
@@ -411,7 +413,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
@@ -429,7 +431,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
@@ -448,7 +450,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
@@ -477,7 +479,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
@@ -496,7 +498,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
@@ -512,7 +514,7 @@ export class MerchantController {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const result = await merchantService.getMerchantByUserId(
                 req.user.id,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             const order = await ordersService.updateOrderStatus(result.data.id, req.params.id as string, OrderStatus.PREPARING);
             return sendResponse(res, 200, true, 'Order is now being prepared', order);
@@ -526,7 +528,7 @@ export class MerchantController {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
             const result = await merchantService.getMerchantByUserId(
                 req.user.id,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             const order = await ordersService.updateOrderStatus(result.data.id, req.params.id as string, OrderStatus.READY_FOR_PICKUP);
             return sendResponse(res, 200, true, 'Order is ready for pickup', order);
@@ -553,7 +555,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
@@ -576,7 +578,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
 
             const group = await merchantService.createExtraGroup(result.data.id, productId as string, {
@@ -598,7 +600,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
 
             await merchantService.deleteExtraGroup(result.data.id, id as string);
@@ -619,7 +621,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
 
             const option = await merchantService.addExtraOption(result.data.id, groupId as string, {
@@ -640,7 +642,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
 
             await merchantService.deleteExtraOption(result.data.id, id as string);
@@ -691,7 +693,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             if (!result.success || !result.data) {
                 return sendResponse(res, 404, false, 'Merchant store not found');
@@ -725,7 +727,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             if (!result.success || !result.data) {
                 return sendResponse(res, 404, false, 'Merchant store not found');
@@ -744,7 +746,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             if (!result.success || !result.data) {
                 return sendResponse(res, 404, false, 'Merchant store not found');
@@ -770,7 +772,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             if (!result.success || !result.data) {
                 return sendResponse(res, 404, false, 'Merchant store not found');
@@ -795,7 +797,7 @@ export class MerchantController {
             const userId = req.user.id;
             const result = await merchantService.getMerchantByUserId(
                 userId,
-                typeof req.query.merchantId === 'string' ? req.query.merchantId : undefined,
+                getMerchantIdFromReq(req),
             );
             if (!result.success || !result.data) {
                 return sendResponse(res, 404, false, 'Merchant store not found');

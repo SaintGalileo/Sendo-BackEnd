@@ -120,30 +120,18 @@ export class MerchantOnboardingService {
             return { success: false, message: 'Merchant not found', data: null, code: 'MERCHANT_NOT_FOUND' };
         }
 
-        const mId = merchantId ? String(merchantId) : undefined;
+        const mId = (merchantId && merchantId !== 'undefined' && merchantId !== 'null') ? String(merchantId).trim() : undefined;
         if (mId) {
             const match = merchants.find((m: any) => String(m.id) === mId);
-            if (!match) {
-                return {
-                    success: false,
-                    message: 'Merchant not found',
-                    data: null,
-                    code: 'MERCHANT_NOT_FOUND',
-                };
+            if (match) {
+                return { success: true, data: match, merchants };
             }
-            return { success: true, data: match };
         }
 
-        // Backward compatibility: if only one merchant exists, we can safely infer it.
-        if (merchants.length === 1) return { success: true, data: merchants[0] };
-
-        return {
-            success: false,
-            message: 'Multiple merchants found. merchantId is required for this request.',
-            data: null,
-            code: 'MERCHANT_SELECTION_REQUIRED',
-            merchants,
-        };
+        // Backward compatibility & multi-merchant fallback:
+        // If no specific merchantId requested (or requested merchantId was not found among user's stores),
+        // default to the user's first store instead of failing.
+        return { success: true, data: merchants[0], merchants };
     }
 
     async updateStore(merchantId: string, updateData: any) {
