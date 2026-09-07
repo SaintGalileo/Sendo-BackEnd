@@ -147,6 +147,20 @@ export class MerchantOnboardingService {
     }
 
     async updateStatus(merchantId: string, status: string | boolean) {
+        const isGoingOnline = status === true || status === 'open' || status === 'online' || status === 'busy';
+
+        if (isGoingOnline) {
+            const { data: merchant } = await supabase
+                .from('merchants')
+                .select('verification_status, status')
+                .eq('id', merchantId)
+                .single();
+
+            if (merchant && merchant.verification_status !== 'verified' && merchant.status !== 'verified') {
+                throw new Error('Your store must be verified by admin before going online.');
+            }
+        }
+
         let updateData: any = {};
 
         if (typeof status === 'boolean') {
