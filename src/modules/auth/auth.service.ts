@@ -102,7 +102,7 @@ export class AuthService {
         const registrationToken = jwt.sign(
             { phone, isRegistration: true },
             JWT_SECRET,
-            { expiresIn: '1h' }
+            { expiresIn: '24h' }
         );
 
         if (userError && userError.code === 'PGRST116') {
@@ -197,12 +197,13 @@ export class AuthService {
 
     // --- NEW REGISTRATION METHODS ---
 
-    private verifyRegistrationToken(registrationToken: string): { phone: string } | null {
+    private verifyRegistrationToken(registrationToken: string): { phone: string } | null | 'expired' {
         try {
             const decoded = jwt.verify(registrationToken, JWT_SECRET) as any;
             if (!decoded.isRegistration || !decoded.phone) return null;
             return { phone: decoded.phone };
-        } catch (error) {
+        } catch (error: any) {
+            if (error.name === 'TokenExpiredError') return 'expired';
             return null;
         }
     }
@@ -221,7 +222,8 @@ export class AuthService {
 
     async registerConsumer(registrationToken: string, firstName: string, lastName: string, email?: string): Promise<{ success: boolean; message: string; data?: any; token?: string }> {
         const decoded = this.verifyRegistrationToken(registrationToken);
-        if (!decoded) return { success: false, message: 'Invalid or expired registration token' };
+        if (decoded === 'expired') return { success: false, message: 'SESSION_EXPIRED: Your session has expired. Please verify your phone number again.' };
+        if (!decoded) return { success: false, message: 'Invalid registration token. Please start again.' };
 
         // Check if user already exists
         const { data: existingUser } = await supabase
@@ -272,7 +274,8 @@ export class AuthService {
         email?: string
     ): Promise<{ success: boolean; message: string; data?: any; token?: string }> {
         const decoded = this.verifyRegistrationToken(registrationToken);
-        if (!decoded) return { success: false, message: 'Invalid or expired registration token' };
+        if (decoded === 'expired') return { success: false, message: 'SESSION_EXPIRED: Your session has expired. Please verify your phone number again.' };
+        if (!decoded) return { success: false, message: 'Invalid registration token. Please start again.' };
 
         // 1. Get or Create User
         const { data: existingUser } = await supabase
@@ -354,7 +357,8 @@ export class AuthService {
         email?: string
     ): Promise<{ success: boolean; message: string; data?: any; token?: string }> {
         const decoded = this.verifyRegistrationToken(registrationToken);
-        if (!decoded) return { success: false, message: 'Invalid or expired registration token' };
+        if (decoded === 'expired') return { success: false, message: 'SESSION_EXPIRED: Your session has expired. Please verify your phone number again.' };
+        if (!decoded) return { success: false, message: 'Invalid registration token. Please start again.' };
 
         if (!this.allowedMerchantTypes.includes(merchantType as MerchantType)) {
             return {
