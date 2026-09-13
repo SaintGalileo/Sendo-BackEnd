@@ -30,6 +30,8 @@ router.get('/catalog', merchantController.getCatalog);
 
 // Products
 router.post('/products', merchantController.createProduct);
+router.patch('/products/:id', merchantController.updateProduct);
+router.put('/products/:id', merchantController.updateProduct);
 router.delete('/products/:id', merchantController.deleteProduct);
 router.put('/products/:id/availability', merchantController.updateProductAvailability);
 

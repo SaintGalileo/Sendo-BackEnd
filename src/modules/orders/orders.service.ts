@@ -97,7 +97,7 @@ export class OrdersService {
         let subtotal = 0;
 
         const orderItemsData = cartItems.map((item: any) => {
-            const price = item.product?.price || 0;
+            const price = Number(item.product?.surge_price ?? item.product?.price) || 0;
             const extraCost = (item.extras || []).reduce((sum: number, ext: any) => sum + (ext.price || 0), 0);
             const itemTotal = (price + extraCost) * item.quantity;
             subtotal += itemTotal;

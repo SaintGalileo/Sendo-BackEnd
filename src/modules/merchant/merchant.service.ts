@@ -6,10 +6,13 @@ import { EmailService } from '../notifications/email.service';
 import { MerchantEarningsService } from './earnings.service';
 import { OrderStatus } from '../../common/constants/orderStatus';
 import type { MerchantType } from '../admin/moduleMerchantTypes';
+import { UtilityService } from '../utility/utility.service';
+import { computeProductSurgePrice } from '../utility/product-surge.util';
 
 const socketService = SocketService.getInstance();
 const emailService = new EmailService();
 const earningsService = new MerchantEarningsService();
+const utilityService = new UtilityService();
 
 /** Stable UUID-shaped id for synthetic "Uncategorized" catalog buckets (not stored in DB). */
 function uncategorizedCategoryId(merchantId: string): string {
@@ -268,18 +271,47 @@ export class MerchantOnboardingService {
     }
 
     async createProduct(merchantId: string, productData: any) {
+        const basePrice = Number(productData.price) || 0;
+        const surgePercentage = await utilityService.getProductSurgePercentage();
+        const surge_price = computeProductSurgePrice(basePrice, surgePercentage);
+
         const { data, error } = await supabase
             .from('products')
-            .insert([{ ...productData, merchant_id: merchantId }])
+            .insert([{
+                ...productData,
+                price: basePrice,
+                surge_price,
+                merchant_id: merchantId,
+            }])
             .select()
             .single();
 
-        // If .single() fails (sometimes due to RLS delays or other issues), 
-        // but the data was actually inserted, we handle it gracefully.
         if (error) {
             console.error('Create product error:', error.message);
             throw new Error(error.message);
         }
+        return data;
+    }
+
+    async updateProduct(merchantId: string, productId: string, updates: Record<string, any>) {
+        const patch: Record<string, unknown> = { ...updates };
+
+        if (updates.price !== undefined) {
+            const basePrice = Number(updates.price) || 0;
+            const surgePercentage = await utilityService.getProductSurgePercentage();
+            patch.price = basePrice;
+            patch.surge_price = computeProductSurgePrice(basePrice, surgePercentage);
+        }
+
+        const { data, error } = await supabase
+            .from('products')
+            .update(patch)
+            .eq('id', productId)
+            .eq('merchant_id', merchantId)
+            .select()
+            .single();
+
+        if (error) throw new Error(error.message);
         return data;
     }
 

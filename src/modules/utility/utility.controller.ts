@@ -8,4 +8,12 @@ export class UtilityController {
         const result = await service.getContacts();
         return res.status(200).json(result);
     }
+
+    async getProductSurgePercentage(_req: Request, res: Response) {
+        const surge_percentage = await service.getProductSurgePercentage();
+        return res.status(200).json({
+            success: true,
+            data: { surge_percentage },
+        });
+    }
 }

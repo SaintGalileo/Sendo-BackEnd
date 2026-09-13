@@ -107,6 +107,12 @@ export class UtilityService {
         return { surge_price, surge_percentage };
     }
 
+    /** Product catalog markup % for vendors (does not change existing products until next save). */
+    async getProductSurgePercentage(): Promise<number> {
+        const caps = await this.getSurgeCaps();
+        return caps.surge_percentage;
+    }
+
     async updateContacts(
         body: Record<string, unknown>,
         audit: { actor: AuditActor; reason: string },

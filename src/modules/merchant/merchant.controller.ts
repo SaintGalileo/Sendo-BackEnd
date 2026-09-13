@@ -296,6 +296,45 @@ export class MerchantController {
         }
     }
 
+    async updateProduct(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const userId = req.user.id;
+            const result = await merchantService.getMerchantByUserId(
+                userId,
+                getMerchantIdFromReq(req),
+            );
+            if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
+
+            const allowed = [
+                'name',
+                'description',
+                'price',
+                'category_id',
+                'image_url',
+                'is_available',
+                'stock_quantity',
+                'track_stock',
+            ] as const;
+            const updates: Record<string, unknown> = {};
+            for (const key of allowed) {
+                if (req.body[key] !== undefined) updates[key] = req.body[key];
+            }
+            if (Object.keys(updates).length === 0) {
+                return sendResponse(res, 400, false, 'No valid fields to update');
+            }
+
+            const product = await merchantService.updateProduct(
+                result.data.id,
+                req.params.id as string,
+                updates,
+            );
+            return sendResponse(res, 200, true, 'Product updated', product);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
     async deleteProduct(req: AuthRequest, res: Response) {
         try {
             if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
