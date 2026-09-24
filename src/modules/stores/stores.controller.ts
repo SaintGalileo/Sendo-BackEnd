@@ -37,8 +37,15 @@ export class StoresController {
     async getNearbyStores(req: AuthRequest, res: Response) {
         try {
             const pagination = getPaginationOptions(req.query);
-            const { type } = req.query;
-            const result = await storesService.getNearbyStores(req.user.id, pagination, type as string | undefined);
+            const { type, lat, lng, addressId } = req.query;
+            const result = await storesService.getNearbyStores(
+                req.user.id,
+                pagination,
+                type as string | undefined,
+                lat as string | undefined,
+                lng as string | undefined,
+                addressId as string | undefined,
+            );
             return sendResponse(
                 res,
                 200,
@@ -71,8 +78,15 @@ export class StoresController {
     async getStoresByCity(req: AuthRequest, res: Response) {
         try {
             const pagination = getPaginationOptions(req.query);
-            const { type } = req.query;
-            const result = await storesService.getStoresByCity(req.user.id, pagination, type as string | undefined);
+            const { type, lat, lng, addressId } = req.query;
+            const result = await storesService.getStoresByCity(
+                req.user.id,
+                pagination,
+                type as string | undefined,
+                lat as string | undefined,
+                lng as string | undefined,
+                addressId as string | undefined,
+            );
             return sendResponse(
                 res,
                 200,

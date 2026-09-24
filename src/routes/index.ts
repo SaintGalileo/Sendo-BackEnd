@@ -18,6 +18,7 @@ import searchRoutes from '../modules/search/search.routes';
 import { reviewRoutes, storeReviewRoutes, courierReviewRoutes } from '../modules/reviews/reviews.routes';
 import adminRoutes from '../modules/admin/admin.routes';
 import utilityRoutes from '../modules/utility/utility.routes';
+import serviceabilityRoutes from '../modules/serviceability/serviceability.routes';
 
 const router = Router();
 const paymentsController = new PaymentsController();
@@ -31,6 +32,7 @@ router.use('/auth', authRoutes);
 // Shared / Discovery (Consumer view)
 router.use('/users', consumerRoutes); // profile, addresses, favorites
 router.use('/stores', storesRoutes);
+router.use('/serviceability', serviceabilityRoutes);
 router.use('/products', productsRoutes);
 router.use('/cart', cartRoutes);
 router.use('/orders', ordersRoutes);

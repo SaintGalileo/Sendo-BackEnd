@@ -1,6 +1,11 @@
 import { createHash } from 'crypto';
 import { supabase } from '../../config/supabase';
 import { isMerchantAvailable } from '../../common/utils/helpers';
+import {
+    DEFAULT_MERCHANT_DELIVERY_RADIUS_KM,
+    haversineDistanceKm,
+    resolveMerchantDeliveryRadiusKm,
+} from '../../common/utils/geo.util';
 import { COMMERCIAL_MERCHANT_TYPES } from '../admin/moduleMerchantTypes';
 
 function uncategorizedCategoryId(merchantId: string): string {
@@ -20,6 +25,11 @@ const TYPE_ALIAS_MAP: Record<string, string[]> = {
     store: ['store', 'other', 'general', ...COMMERCIAL_MERCHANT_TYPES],
 };
 
+/** Cap for in-memory geo filter pool (MVP scale). */
+const GEO_POOL_LIMIT = 500;
+/** Soft shuffle only among the nearest N featured stores. */
+const FEATURED_SHUFFLE_POOL = 20;
+
 function applyTypeFilter(query: any, type?: string) {
     if (!type || type === 'all') return query;
     const clean = type.toLowerCase().trim();
@@ -29,10 +39,20 @@ function applyTypeFilter(query: any, type?: string) {
     return query.eq('type', type);
 }
 
+function annotateAvailability(stores: any[]) {
+    return (stores || []).map((store) => ({
+        ...store,
+        is_available: isMerchantAvailable(store),
+    }));
+}
+
 export class StoresService {
     private readonly allowedStoreTypes = COMMERCIAL_MERCHANT_TYPES;
 
     async getStores(filters: any, pagination: any) {
+        const hasGeo = filters.lat != null && filters.lng != null &&
+            !isNaN(parseFloat(filters.lat)) && !isNaN(parseFloat(filters.lng));
+
         let query = supabase
             .from('merchants')
             .select('*', { count: 'exact' })
@@ -51,12 +71,32 @@ export class StoresService {
             query = query.ilike('city', `%${filters.city}%`);
         }
 
-        // Search logic
         if (filters.search) {
             query = query.ilike('name', `%${filters.search}%`);
         }
 
-        // Pagination
+        // When geo filtering, fetch a pool first, filter by delivery_radius, then paginate.
+        if (hasGeo) {
+            query = query.limit(GEO_POOL_LIMIT);
+            const { data, error } = await query;
+            if (error) throw new Error(error.message);
+
+            const userLat = parseFloat(filters.lat);
+            const userLng = parseFloat(filters.lng);
+            const sorted = this.filterAndSortByDeliveryReach(
+                annotateAvailability(data || []),
+                userLat,
+                userLng,
+            );
+
+            const from = pagination.offset;
+            const to = from + pagination.limit;
+            return {
+                data: sorted.slice(from, to),
+                totalCount: sorted.length,
+            };
+        }
+
         const from = pagination.offset;
         const to = from + pagination.limit - 1;
         query = query.range(from, to);
@@ -64,48 +104,43 @@ export class StoresService {
         const { data, count, error } = await query;
         if (error) throw new Error(error.message);
 
-        let stores = (data || []).map(store => {
-            const isAvailable = isMerchantAvailable(store);
-            return {
-                ...store,
-                is_available: isAvailable
-            };
-        });
-
-        if (filters.lat && filters.lng) {
-            stores = this.sortByDistance(stores, parseFloat(filters.lat), parseFloat(filters.lng));
-        }
-
-        return { data: stores, totalCount: count || 0 };
+        return {
+            data: annotateAvailability(data || []),
+            totalCount: count || 0,
+        };
     }
 
-    async getNearbyStores(userId: string, pagination: any, type?: string) {
-        const { data: addresses, error: addrError } = await supabase
-            .from('addresses')
-            .select('*')
-            .eq('user_id', userId)
-            .order('is_default', { ascending: false });
-
-        if (addrError || !addresses || addresses.length === 0) {
+    /**
+     * Nearby stores for a delivery pin.
+     * Prefers explicit lat/lng (selected delivery address). Falls back to DB default address.
+     */
+    async getNearbyStores(
+        userId: string,
+        pagination: any,
+        type?: string,
+        lat?: string,
+        lng?: string,
+        addressId?: string,
+    ) {
+        const coords = await this.resolveDeliveryCoords(userId, lat, lng, addressId);
+        if (!coords) {
             throw new Error('No delivery address found. Please set a delivery address.');
         }
 
-        const address = addresses[0];
-
-        const filters = {
-            lat: address.latitude?.toString(),
-            lng: address.longitude?.toString(),
-            type
-        };
-
-        return this.getStores(filters, pagination);
+        return this.getStores(
+            {
+                lat: String(coords.lat),
+                lng: String(coords.lng),
+                type,
+            },
+            pagination,
+        );
     }
 
     async getFeaturedStores(pagination: any, lat?: string, lng?: string, type?: string) {
-        // Fetch a pool of stores to shuffle
         let query = supabase
             .from('merchants')
-            .select('*', { count: 'exact' })
+            .select('*')
             .or('verification_status.eq.verified,verified.eq.true')
             .not('status', 'in', '("suspended","banned","deleted","rejected")');
 
@@ -113,53 +148,55 @@ export class StoresService {
             query = applyTypeFilter(query, type);
         }
 
-        const { data, count, error } = await query.limit(100);
-
+        const { data, error } = await query.limit(GEO_POOL_LIMIT);
         if (error) throw new Error(error.message);
 
-        let stores = (data || []).map(store => {
-            const isAvailable = isMerchantAvailable(store);
-            return {
-                ...store,
-                is_available: isAvailable
-            };
-        });
+        let stores = annotateAvailability(data || []);
 
-        // Filter by distance if coordinates provided
-        if (lat && lng) {
-            stores = this.sortByDistance(stores, parseFloat(lat), parseFloat(lng));
+        if (lat && lng && !isNaN(parseFloat(lat)) && !isNaN(parseFloat(lng))) {
+            stores = this.filterAndSortByDeliveryReach(stores, parseFloat(lat), parseFloat(lng));
+            // Soft shuffle among nearest only — keeps local relevance
+            const near = stores.slice(0, FEATURED_SHUFFLE_POOL);
+            const rest = stores.slice(FEATURED_SHUFFLE_POOL);
+            for (let i = near.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [near[i], near[j]] = [near[j], near[i]];
+            }
+            stores = [...near, ...rest];
+        } else {
+            stores = stores.sort(() => Math.random() - 0.5);
         }
 
-        // Shuffle and paginate
-        const shuffled = stores.sort(() => Math.random() - 0.5);
         const from = pagination.offset;
         const to = from + pagination.limit;
-        const paged = shuffled.slice(from, to);
-
-        return { data: paged, totalCount: stores.length };
+        return {
+            data: stores.slice(from, to),
+            totalCount: stores.length,
+        };
     }
 
-    async getStoresByCity(userId: string, pagination: any, type?: string) {
-        const { data: addresses, error: addrError } = await supabase
-            .from('addresses')
-            .select('*')
-            .eq('user_id', userId)
-            .order('is_default', { ascending: false });
-
-        if (addrError || !addresses || addresses.length === 0) {
+    async getStoresByCity(
+        userId: string,
+        pagination: any,
+        type?: string,
+        lat?: string,
+        lng?: string,
+        addressId?: string,
+    ) {
+        const coords = await this.resolveDeliveryCoords(userId, lat, lng, addressId);
+        if (!coords) {
             throw new Error('No delivery address found. Please set a delivery address.');
         }
 
-        const address = addresses[0];
-
-        const filters = {
-            city: address.city,
-            lat: address.latitude?.toString(),
-            lng: address.longitude?.toString(),
-            type
-        };
-
-        return this.getStores(filters, pagination);
+        return this.getStores(
+            {
+                city: coords.city,
+                lat: String(coords.lat),
+                lng: String(coords.lng),
+                type,
+            },
+            pagination,
+        );
     }
 
     async getStoreById(storeId: string) {
@@ -176,16 +213,13 @@ export class StoresService {
             throw new Error('Store is not verified or currently unavailable.');
         }
 
-        const isAvailable = isMerchantAvailable(data);
         return {
             ...data,
-            is_available: isAvailable
+            is_available: isMerchantAvailable(data),
         };
     }
 
     async getStoreMenu(storeId: string) {
-        // Same shape as merchant catalog — include orphans so admin-created
-        // products without a matching category still appear for customers.
         const [{ data: categories, error: catErr }, { data: allProducts, error: prodErr }] =
             await Promise.all([
                 supabase
@@ -251,33 +285,74 @@ export class StoresService {
         return { data: data || [], totalCount: count || 0 };
     }
 
-    // Basic Haversine distance formula used for local sorting and filtering
-    private sortByDistance(stores: any[], userLat: number, userLng: number) {
-        const MAX_RADIUS_KM = 60; // Limit results to 60km radius
+    /**
+     * Keep stores that can deliver to the pin using merchant.delivery_radius
+     * (fallback DEFAULT_MERCHANT_DELIVERY_RADIUS_KM), sorted by distance.
+     */
+    private filterAndSortByDeliveryReach(stores: any[], userLat: number, userLng: number) {
+        const user = { lat: userLat, lng: userLng };
 
         return stores
-            .map(store => {
-                if (!store.latitude || !store.longitude) return { ...store, distance: Infinity };
-                const dist = this.getDistanceFromLatLonInKm(userLat, userLng, store.latitude, store.longitude);
-                return { ...store, distance: dist };
+            .map((store) => {
+                const mLat = Number(store.latitude);
+                const mLng = Number(store.longitude);
+                if (isNaN(mLat) || isNaN(mLng)) {
+                    return { ...store, distance: Infinity };
+                }
+                const dist = haversineDistanceKm(user, { lat: mLat, lng: mLng });
+                const radius = resolveMerchantDeliveryRadiusKm(
+                    store.delivery_radius,
+                    DEFAULT_MERCHANT_DELIVERY_RADIUS_KM,
+                );
+                return { ...store, distance: Math.round(dist * 100) / 100, _radius: radius };
             })
-            .filter(store => store.distance <= MAX_RADIUS_KM) // Filter out stores beyond the radius
-            .sort((a, b) => a.distance - b.distance);
+            .filter((store) => store.distance <= store._radius)
+            .sort((a, b) => a.distance - b.distance)
+            .map(({ _radius, ...store }) => store);
     }
 
-    private getDistanceFromLatLonInKm(lat1: number, lon1: number, lat2: number, lon2: number) {
-        const R = 6371; // Radius of the earth in km
-        const dLat = this.deg2rad(lat2 - lat1);
-        const dLon = this.deg2rad(lon2 - lon1);
-        const a =
-            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-            Math.cos(this.deg2rad(lat1)) * Math.cos(this.deg2rad(lat2)) *
-            Math.sin(dLon / 2) * Math.sin(dLon / 2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        return R * c; // Distance in km
-    }
+    private async resolveDeliveryCoords(
+        userId: string,
+        lat?: string,
+        lng?: string,
+        addressId?: string,
+    ): Promise<{ lat: number; lng: number; city?: string } | null> {
+        const qLat = lat != null ? parseFloat(lat) : NaN;
+        const qLng = lng != null ? parseFloat(lng) : NaN;
 
-    private deg2rad(deg: number) {
-        return deg * (Math.PI / 180);
+        if (!isNaN(qLat) && !isNaN(qLng)) {
+            let city: string | undefined;
+            if (addressId) {
+                const { data: addr } = await supabase
+                    .from('addresses')
+                    .select('city')
+                    .eq('id', addressId)
+                    .eq('user_id', userId)
+                    .maybeSingle();
+                city = addr?.city || undefined;
+            }
+            return { lat: qLat, lng: qLng, city };
+        }
+
+        let query = supabase
+            .from('addresses')
+            .select('*')
+            .eq('user_id', userId);
+
+        if (addressId) {
+            query = query.eq('id', addressId);
+        } else {
+            query = query.order('is_default', { ascending: false });
+        }
+
+        const { data: addresses, error } = await query;
+        if (error || !addresses || addresses.length === 0) return null;
+
+        const address = addresses[0];
+        const aLat = Number(address.latitude);
+        const aLng = Number(address.longitude);
+        if (isNaN(aLat) || isNaN(aLng)) return null;
+
+        return { lat: aLat, lng: aLng, city: address.city || undefined };
     }
 }
