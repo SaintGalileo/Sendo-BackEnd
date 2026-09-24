@@ -96,13 +96,21 @@ export class OrdersService {
 
         // Only verified merchants can receive live orders
         let merchantModes: 'pickup' | 'delivery' | 'both' = 'delivery';
+        let merchantStore: {
+            id: string;
+            name?: string;
+            address?: string | null;
+            latitude?: number | null;
+            longitude?: number | null;
+        } | null = null;
         if (merchantId) {
             const { data: merchant, error: merchantErr } = await supabase
                 .from('merchants')
-                .select('id, status, name, is_online, is_pickup_only, fulfillment_modes')
+                .select('id, status, name, address, latitude, longitude, is_online, is_pickup_only, fulfillment_modes')
                 .eq('id', merchantId)
                 .single();
             if (merchantErr || !merchant) throw new Error('Merchant not found');
+            merchantStore = merchant;
             const st = String(merchant.status || '').toLowerCase();
             if (st !== 'verified' && st !== 'active' && st !== 'approved') {
                 throw new Error(
@@ -148,9 +156,12 @@ export class OrdersService {
 
         let deliveryFee = 0;
         let addressId: string | null = null;
-        let deliveryAddress: string | null = null;
-        let deliveryLat: number | null = null;
-        let deliveryLng: number | null = null;
+        // DB still has NOT NULL on delivery_address — for pickup, snapshot store location
+        let deliveryAddress: string =
+            merchantStore?.address?.trim() ||
+            (merchantStore?.name ? `${merchantStore.name} (store pickup)` : 'Store pickup');
+        let deliveryLat: number | null = merchantStore?.latitude != null ? Number(merchantStore.latitude) : null;
+        let deliveryLng: number | null = merchantStore?.longitude != null ? Number(merchantStore.longitude) : null;
 
         if (fulfillmentType === 'delivery') {
             if (!data.addressId) throw new Error('Delivery address is required');

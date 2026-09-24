@@ -34,3 +34,8 @@ BEGIN
       CHECK (fulfillment_type IN ('pickup', 'delivery'));
   END IF;
 END $$;
+
+-- Allow pickup orders without a customer delivery address
+-- (app still snapshots store address into delivery_address for display)
+ALTER TABLE public.orders
+ALTER COLUMN delivery_address DROP NOT NULL;
