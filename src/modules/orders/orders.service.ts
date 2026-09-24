@@ -149,11 +149,7 @@ export class OrdersService {
             }
         }
 
-        const notesBase = data.notes || '';
-        const notesWithRef =
-            isOnlinePaid && paymentReference
-                ? `${notesBase}${notesBase ? '\n' : ''}Paystack ref: ${paymentReference}`
-                : notesBase;
+        const notesBase = data.notes != null ? String(data.notes).trim() : '';
 
         // 2. Create the order
         const { data: order, error: orderError } = await supabase
@@ -169,7 +165,8 @@ export class OrdersService {
                 delivery_fee: deliveryFee,
                 total_price: totalAmount,
                 status: OrderStatus.PENDING,
-                notes: notesWithRef,
+                notes: notesBase || null,
+                payment_reference: isOnlinePaid && paymentReference ? paymentReference : null,
                 payment_method: effectiveMethod,
                 payment_status: (effectiveMethod === 'wallet' || isOnlinePaid) ? 'paid' : 'pending'
             }])
