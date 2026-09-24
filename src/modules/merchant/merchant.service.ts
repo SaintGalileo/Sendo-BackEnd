@@ -6,13 +6,10 @@ import { EmailService } from '../notifications/email.service';
 import { MerchantEarningsService } from './earnings.service';
 import { OrderStatus } from '../../common/constants/orderStatus';
 import type { MerchantType } from '../admin/moduleMerchantTypes';
-import { UtilityService } from '../utility/utility.service';
-import { computeProductSurgePrice } from '../utility/product-surge.util';
 
 const socketService = SocketService.getInstance();
 const emailService = new EmailService();
 const earningsService = new MerchantEarningsService();
-const utilityService = new UtilityService();
 
 /** Stable UUID-shaped id for synthetic "Uncategorized" catalog buckets (not stored in DB). */
 function uncategorizedCategoryId(merchantId: string): string {
@@ -272,15 +269,12 @@ export class MerchantOnboardingService {
 
     async createProduct(merchantId: string, productData: any) {
         const basePrice = Number(productData.price) || 0;
-        const surgePercentage = await utilityService.getProductSurgePercentage();
-        const surge_price = computeProductSurgePrice(basePrice, surgePercentage);
 
         const { data, error } = await supabase
             .from('products')
             .insert([{
                 ...productData,
                 price: basePrice,
-                surge_price,
                 merchant_id: merchantId,
             }])
             .select()
@@ -297,10 +291,7 @@ export class MerchantOnboardingService {
         const patch: Record<string, unknown> = { ...updates };
 
         if (updates.price !== undefined) {
-            const basePrice = Number(updates.price) || 0;
-            const surgePercentage = await utilityService.getProductSurgePercentage();
-            patch.price = basePrice;
-            patch.surge_price = computeProductSurgePrice(basePrice, surgePercentage);
+            patch.price = Number(updates.price) || 0;
         }
 
         const { data, error } = await supabase

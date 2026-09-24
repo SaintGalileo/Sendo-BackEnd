@@ -6,10 +6,6 @@ import {
     sanitizeForAudit,
     writeAuditLog,
 } from './admin.audit';
-import { UtilityService } from '../utility/utility.service';
-import { computeProductSurgePrice } from '../utility/product-surge.util';
-
-const utilityService = new UtilityService();
 
 export interface ItemFilters {
     search?: string;
@@ -150,14 +146,12 @@ export class AdminItemsService {
             itemData.image_url || (images.length > 0 ? images[0] : null);
 
         const basePrice = Number(itemData.price) || 0;
-        const surgePercentage = await utilityService.getProductSurgePercentage();
 
         const payload: Record<string, unknown> = {
             name,
             merchant_id: merchantId,
             category_id: categoryId,
             price: basePrice,
-            surge_price: computeProductSurgePrice(basePrice, surgePercentage),
             description: itemData.description ? String(itemData.description).trim() : null,
             is_available: itemData.is_available !== false,
             stock_quantity: Number(itemData.stock_quantity ?? 0) || 0,
@@ -216,10 +210,7 @@ export class AdminItemsService {
             patch.category_id = categoryId;
         }
         if (updates.price !== undefined) {
-            const basePrice = Number(updates.price) || 0;
-            const surgePercentage = await utilityService.getProductSurgePercentage();
-            patch.price = basePrice;
-            patch.surge_price = computeProductSurgePrice(basePrice, surgePercentage);
+            patch.price = Number(updates.price) || 0;
         }
         if (updates.description !== undefined) {
             patch.description = updates.description ? String(updates.description).trim() : null;

@@ -8,6 +8,7 @@ import { LocationService } from './location.service';
 import { MerchantEarningsService } from '../merchant/earnings.service';
 import { UtilityService } from '../utility/utility.service';
 import { SurgeService } from '../utility/surge.service';
+import { computeProductSurgePrice } from '../utility/product-surge.util';
 
 const cartService = new CartService();
 const walletService = new WalletService();
@@ -95,9 +96,11 @@ export class OrdersService {
         }
 
         let subtotal = 0;
+        const surgePercentage = await utilityService.getProductSurgePercentage();
 
         const orderItemsData = cartItems.map((item: any) => {
-            const price = Number(item.product?.surge_price ?? item.product?.price) || 0;
+            const basePrice = Number(item.product?.price) || 0;
+            const price = computeProductSurgePrice(basePrice, surgePercentage);
             const extraCost = (item.extras || []).reduce((sum: number, ext: any) => sum + (ext.price || 0), 0);
             const itemTotal = (price + extraCost) * item.quantity;
             subtotal += itemTotal;
