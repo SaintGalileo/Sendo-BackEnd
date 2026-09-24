@@ -453,6 +453,13 @@ export class AdminStoresService {
             patch.delivery_fee = Number(updates.delivery_fee) || null;
         }
         if (updates.is_pickup_only !== undefined) patch.is_pickup_only = Boolean(updates.is_pickup_only);
+        if (updates.fulfillment_modes !== undefined) {
+            const mode = String(updates.fulfillment_modes).toLowerCase();
+            if (['pickup', 'delivery', 'both'].includes(mode)) {
+                patch.fulfillment_modes = mode;
+                patch.is_pickup_only = mode === 'pickup';
+            }
+        }
         if (updates.is_online !== undefined) patch.is_online = Boolean(updates.is_online);
         if (updates.active_days !== undefined) patch.active_days = updates.active_days;
         if (updates.off_days !== undefined) patch.off_days = updates.off_days;

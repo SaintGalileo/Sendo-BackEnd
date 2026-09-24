@@ -453,6 +453,7 @@ export class AuthService {
                     active_days: activeDays,
                     off_days: offDays,
                     is_pickup_only: isPickupOnly,
+                    fulfillment_modes: isPickupOnly ? 'pickup' : 'delivery',
                     delivery_radius: deliveryRadius,
                     preparation_time: preparationTime,
                     delivery_fee: deliveryFee,

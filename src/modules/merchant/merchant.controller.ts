@@ -496,11 +496,12 @@ export class MerchantController {
             const allowedMerchantStatuses = [
                 OrderStatus.ACCEPTED,
                 OrderStatus.PREPARING,
-                OrderStatus.READY_FOR_PICKUP
+                OrderStatus.READY_FOR_PICKUP,
+                OrderStatus.DELIVERED,
             ];
 
             if (!allowedMerchantStatuses.includes(status)) {
-                return sendResponse(res, 400, false, 'Merchants can only set accepted, preparing, or ready_for_pickup');
+                return sendResponse(res, 400, false, 'Merchants can only set accepted, preparing, ready_for_pickup, or delivered (pickup only)');
             }
 
             await ordersService.updateOrderStatus(result.data.id, req.params.id as string, status);
@@ -585,7 +586,28 @@ export class MerchantController {
     }
 
     async deliverOrder(req: AuthRequest, res: Response) {
-        return sendResponse(res, 403, false, 'Delivery completion is handled by the assigned courier');
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const result = await merchantService.getMerchantByUserId(
+                req.user.id,
+                getMerchantIdFromReq(req),
+            );
+            if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
+
+            const existing = await merchantService.getOrderById(result.data.id, req.params.id as string);
+            if (String(existing?.fulfillment_type || 'delivery') !== 'pickup') {
+                return sendResponse(res, 403, false, 'Delivery completion is handled by the assigned courier');
+            }
+
+            const order = await ordersService.updateOrderStatus(
+                result.data.id,
+                req.params.id as string,
+                OrderStatus.DELIVERED,
+            );
+            return sendResponse(res, 200, true, 'Order marked as collected', order);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
     }
 
     async getEarnings(req: AuthRequest, res: Response) {

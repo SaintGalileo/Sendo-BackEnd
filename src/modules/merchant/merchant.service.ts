@@ -74,6 +74,7 @@ export class MerchantOnboardingService {
                     active_days: activeDays,
                     off_days: offDays,
                     is_pickup_only: isPickupOnly,
+                    fulfillment_modes: isPickupOnly ? 'pickup' : 'delivery',
                     delivery_radius: deliveryRadius,
                     preparation_time: preparationTime,
                     delivery_fee: deliveryFee
@@ -135,9 +136,25 @@ export class MerchantOnboardingService {
     }
 
     async updateStore(merchantId: string, updateData: any) {
+        const patch: Record<string, any> = { ...updateData };
+
+        if (patch.fulfillment_modes !== undefined) {
+            const mode = String(patch.fulfillment_modes).toLowerCase();
+            if (!['pickup', 'delivery', 'both'].includes(mode)) {
+                throw new Error('fulfillment_modes must be pickup, delivery, or both');
+            }
+            patch.fulfillment_modes = mode;
+            patch.is_pickup_only = mode === 'pickup';
+        } else if (patch.is_pickup_only !== undefined) {
+            patch.is_pickup_only = Boolean(patch.is_pickup_only);
+            if (patch.fulfillment_modes === undefined) {
+                patch.fulfillment_modes = patch.is_pickup_only ? 'pickup' : 'delivery';
+            }
+        }
+
         const { data, error } = await supabase
             .from('merchants')
-            .update(updateData)
+            .update(patch)
             .eq('id', merchantId)
             .select()
             .single();
@@ -372,7 +389,10 @@ export class MerchantOnboardingService {
             .single();
 
         if (error) throw new Error(error.message);
-        return data;
+        return {
+            ...data,
+            order_type: data.fulfillment_type || data.order_type || 'delivery',
+        };
     }
 
     async getOngoingOrders(merchantId: string, pagination: any) {

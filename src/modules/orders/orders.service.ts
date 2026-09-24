@@ -38,7 +38,10 @@ export class OrdersService {
             .single();
 
         if (error) throw new Error(error.message);
-        return data;
+        return {
+            ...data,
+            order_type: data.fulfillment_type || data.order_type || 'delivery',
+        };
     }
 
     private async getHydratedOrderById(orderId: string) {
@@ -49,7 +52,11 @@ export class OrdersService {
             .single();
 
         if (error) throw new Error(error.message);
-        return data;
+        // Compat alias for vendor app (expects order_type)
+        return {
+            ...data,
+            order_type: data.fulfillment_type || data.order_type || 'delivery',
+        };
     }
 
     private async updateEntityAverageRating(entity: 'merchant' | 'courier', entityId: string) {
@@ -80,12 +87,17 @@ export class OrdersService {
         }
 
         const merchantId = cartItems[0].product?.merchant_id;
+        const fulfillmentType =
+            String(data.fulfillmentType || data.fulfillment_type || 'delivery').toLowerCase() === 'pickup'
+                ? 'pickup'
+                : 'delivery';
 
         // Only verified merchants can receive live orders
+        let merchantModes: 'pickup' | 'delivery' | 'both' = 'delivery';
         if (merchantId) {
             const { data: merchant, error: merchantErr } = await supabase
                 .from('merchants')
-                .select('id, status, name')
+                .select('id, status, name, is_online, is_pickup_only, fulfillment_modes')
                 .eq('id', merchantId)
                 .single();
             if (merchantErr || !merchant) throw new Error('Merchant not found');
@@ -94,6 +106,23 @@ export class OrdersService {
                 throw new Error(
                     'This merchant is not verified yet and cannot receive orders. Please choose another store.',
                 );
+            }
+            if (merchant.is_online === false) {
+                throw new Error('This store is currently closed and cannot receive orders.');
+            }
+
+            const rawModes = String(merchant.fulfillment_modes || '').toLowerCase();
+            if (rawModes === 'pickup' || rawModes === 'delivery' || rawModes === 'both') {
+                merchantModes = rawModes;
+            } else if (merchant.is_pickup_only === true) {
+                merchantModes = 'pickup';
+            }
+
+            if (fulfillmentType === 'pickup' && merchantModes === 'delivery') {
+                throw new Error('This store does not offer pickup.');
+            }
+            if (fulfillmentType === 'delivery' && merchantModes === 'pickup') {
+                throw new Error('This store only offers pickup.');
             }
         }
 
@@ -115,17 +144,31 @@ export class OrdersService {
             };
         });
 
-        // 1. Fetch Address Details for snapshot
-        const { data: address, error: addressError } = await supabase
-            .from('addresses')
-            .select('address, latitude, longitude')
-            .eq('id', data.addressId)
-            .single();
+        let deliveryFee = 0;
+        let addressId: string | null = null;
+        let deliveryAddress: string | null = null;
+        let deliveryLat: number | null = null;
+        let deliveryLng: number | null = null;
 
-        if (addressError || !address) throw new Error('Delivery address not found');
+        if (fulfillmentType === 'delivery') {
+            if (!data.addressId) throw new Error('Delivery address is required');
 
-        const deliveryEstimate = await this.getDeliveryFeeEstimate(merchantId, data.addressId);
-        const deliveryFee = deliveryEstimate.fee;
+            const { data: address, error: addressError } = await supabase
+                .from('addresses')
+                .select('address, latitude, longitude')
+                .eq('id', data.addressId)
+                .single();
+
+            if (addressError || !address) throw new Error('Delivery address not found');
+
+            const deliveryEstimate = await this.getDeliveryFeeEstimate(merchantId, data.addressId);
+            deliveryFee = deliveryEstimate.fee;
+            addressId = data.addressId;
+            deliveryAddress = address.address;
+            deliveryLat = address.latitude;
+            deliveryLng = address.longitude;
+        }
+
         const totalAmount = subtotal + deliveryFee;
         const paymentMethod = data.paymentMethod || 'wallet';
         // Treat 'online_paid' as fully paid (Paystack verified)
@@ -157,10 +200,10 @@ export class OrdersService {
             .insert([{
                 consumer_id: userId,
                 merchant_id: merchantId,
-                address_id: data.addressId,
-                delivery_address: address.address,
-                delivery_lat: address.latitude,
-                delivery_lng: address.longitude,
+                address_id: addressId,
+                delivery_address: deliveryAddress,
+                delivery_lat: deliveryLat,
+                delivery_lng: deliveryLng,
                 subtotal,
                 delivery_fee: deliveryFee,
                 total_price: totalAmount,
@@ -168,7 +211,8 @@ export class OrdersService {
                 notes: notesBase || null,
                 payment_reference: isOnlinePaid && paymentReference ? paymentReference : null,
                 payment_method: effectiveMethod,
-                payment_status: (effectiveMethod === 'wallet' || isOnlinePaid) ? 'paid' : 'pending'
+                payment_status: (effectiveMethod === 'wallet' || isOnlinePaid) ? 'paid' : 'pending',
+                fulfillment_type: fulfillmentType,
             }])
             .select()
             .single();
@@ -348,18 +392,27 @@ export class OrdersService {
     }
 
     async updateOrderStatus(merchantId: string, orderId: string, status: OrderStatus) {
-        if (!this.merchantManagedStatuses.includes(status)) {
-            throw new Error('Merchants can only move orders to accepted, preparing, or ready_for_pickup');
-        }
-
         const { data: existingOrder, error: existingOrderError } = await supabase
             .from('orders')
-            .select('status')
+            .select('status, fulfillment_type, courier_id')
             .eq('id', orderId)
             .eq('merchant_id', merchantId)
             .single();
 
         if (existingOrderError) throw new Error(existingOrderError.message);
+
+        const isPickup = String(existingOrder.fulfillment_type || 'delivery') === 'pickup';
+        const allowed = isPickup
+            ? [...this.merchantManagedStatuses, OrderStatus.DELIVERED]
+            : this.merchantManagedStatuses;
+
+        if (!allowed.includes(status)) {
+            throw new Error(
+                isPickup
+                    ? 'Merchants can only move pickup orders to accepted, preparing, ready_for_pickup, or delivered'
+                    : 'Merchants can only move orders to accepted, preparing, or ready_for_pickup',
+            );
+        }
 
         const { data, error } = await supabase
             .from('orders')
@@ -389,12 +442,15 @@ export class OrdersService {
                 body = 'The merchant is now preparing your delicious meal.';
                 break;
             case OrderStatus.READY_FOR_PICKUP:
-                title = 'Order ready for pickup!';
-                body = 'Your order is ready and waiting for a courier.';
-                // Re-notify drivers if order still has no courier
-                if (!data.courier_id) {
-                    const fullOrderForDrivers = fullOrder;
-                    socketService.emitToAvailableDrivers('new_available_order', fullOrderForDrivers);
+                if (isPickup) {
+                    title = 'Ready for pickup!';
+                    body = 'Your order is ready. Please collect it at the store.';
+                } else {
+                    title = 'Order ready for pickup!';
+                    body = 'Your order is ready and waiting for a courier.';
+                    if (!data.courier_id) {
+                        socketService.emitToAvailableDrivers('new_available_order', fullOrder);
+                    }
                 }
                 break;
             case OrderStatus.PICKED_UP:
@@ -406,8 +462,10 @@ export class OrdersService {
                 body = 'Your courier is nearby and will arrive shortly.';
                 break;
             case OrderStatus.DELIVERED:
-                title = 'Order Delivered!';
-                body = 'Enjoy your delivery! Please rate your experience.';
+                title = isPickup ? 'Order collected!' : 'Order Delivered!';
+                body = isPickup
+                    ? 'Thanks for collecting your order. Please rate your experience.'
+                    : 'Enjoy your delivery! Please rate your experience.';
                 socketService.emitToAvailableDrivers('available_order_cancelled', { orderId: data.id });
                 break;
         }

@@ -3,7 +3,8 @@ import Joi from 'joi';
 
 //join create order schema..
 export const createOrderSchema = Joi.object({
-    addressId: Joi.string().uuid().required(),
+    addressId: Joi.string().uuid().allow(null, '').optional(),
+    fulfillmentType: Joi.string().valid('pickup', 'delivery').default('delivery'),
     notes: Joi.string().allow('').optional(),
     paymentMethod: Joi.string().valid('wallet', 'cash', 'online', 'online_paid').default('wallet'),
     paymentReference: Joi.string().allow('', null).optional(),

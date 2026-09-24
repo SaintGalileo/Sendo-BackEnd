@@ -9,14 +9,19 @@ const ordersService = new OrdersService();
 export class OrdersController {
     async createOrder(req: AuthRequest, res: Response) {
         try {
-            const { addressId, notes, paymentMethod, paymentReference } = req.body;
-            if (!addressId) return sendResponse(res, 400, false, 'Address ID is required');
+            const { addressId, notes, paymentMethod, paymentReference, fulfillmentType } = req.body;
+            const fulfillment = String(fulfillmentType || 'delivery').toLowerCase();
+
+            if (fulfillment === 'delivery' && !addressId) {
+                return sendResponse(res, 400, false, 'Address ID is required for delivery orders');
+            }
 
             const order = await ordersService.createOrder(req.user.id, {
                 addressId,
                 notes,
                 paymentMethod,
                 paymentReference,
+                fulfillmentType: fulfillment,
             });
             return sendResponse(res, 201, true, 'Order created successfully', order);
         } catch (error: any) {
