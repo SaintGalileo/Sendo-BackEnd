@@ -5,7 +5,8 @@ import Joi from 'joi';
 export const createOrderSchema = Joi.object({
     addressId: Joi.string().uuid().required(),
     notes: Joi.string().allow('').optional(),
-    paymentMethod: Joi.string().valid('wallet', 'cash').default('wallet'),
+    paymentMethod: Joi.string().valid('wallet', 'cash', 'online', 'online_paid').default('wallet'),
+    paymentReference: Joi.string().allow('', null).optional(),
 });
 
 

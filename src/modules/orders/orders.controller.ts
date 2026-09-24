@@ -9,10 +9,15 @@ const ordersService = new OrdersService();
 export class OrdersController {
     async createOrder(req: AuthRequest, res: Response) {
         try {
-            const { addressId, notes, paymentMethod } = req.body;
+            const { addressId, notes, paymentMethod, paymentReference } = req.body;
             if (!addressId) return sendResponse(res, 400, false, 'Address ID is required');
 
-            const order = await ordersService.createOrder(req.user.id, { addressId, notes, paymentMethod });
+            const order = await ordersService.createOrder(req.user.id, {
+                addressId,
+                notes,
+                paymentMethod,
+                paymentReference,
+            });
             return sendResponse(res, 201, true, 'Order created successfully', order);
         } catch (error: any) {
             return sendResponse(res, 500, false, error.message);

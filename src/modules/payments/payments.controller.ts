@@ -6,12 +6,12 @@ import { EmailService } from '../notifications/email.service';
 import { AuthRequest } from '../../common/middleware/auth.middleware';
 import { sendResponse } from '../../common/utils/response';
 import { getPaginationOptions, formatPaginatedResponse } from '../../common/utils/pagination';
-import { SeerBitService } from './seerbit.service';
+import { PaystackService, PAYSTACK_CALLBACK_URL } from './paystack.service';
 
 const paymentsService = new PaymentsService();
 const walletService = new WalletService();
 const emailService = new EmailService();
-const seerBitService = new SeerBitService();
+const paystackService = new PaystackService();
 
 export class PaymentsController {
     async createIntent(req: AuthRequest, res: Response) {
@@ -26,33 +26,96 @@ export class PaymentsController {
         }
     }
 
-    async createSeerbitCheckout(req: AuthRequest, res: Response) {
+    /** Initialize Paystack checkout (no order created yet). Same response shape as before. */
+    async createCheckoutLink(req: AuthRequest, res: Response) {
         try {
             const { amount } = req.body;
-            if (!amount) return sendResponse(res, 400, false, 'Amount is required');
+            const parsedAmount = Number(amount);
+            if (!parsedAmount || parsedAmount <= 0) {
+                return sendResponse(res, 400, false, 'A valid amount is required');
+            }
 
-            // Generate a unique session reference (NOT linked to any order yet)
             const sessionRef = `SENDO_${req.user.id.slice(0, 8)}_${Date.now()}`;
 
-            // Get user details
             const { data: user } = await supabase
                 .from('users')
                 .select('first_name, last_name, email')
                 .eq('id', req.user.id)
                 .single();
 
-            const fullName = user ? `${user.first_name} ${user.last_name}` : 'Sendo User';
-            const email = user?.email || 'user@sendo.com';
+            const fullName = user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() : 'Sendo User';
+            const email = user?.email || `${req.user.id}@sendo.customer`;
 
-            const paymentLink = await seerBitService.createCheckoutLink(amount, email, sessionRef, fullName);
+            const init = await paystackService.initializeTransaction({
+                email,
+                amountNaira: parsedAmount,
+                reference: sessionRef,
+                callbackUrl: PAYSTACK_CALLBACK_URL,
+                fullName,
+                metadata: { user_id: req.user.id, purpose: 'order_checkout' },
+            });
 
-            if (!paymentLink) {
-                return sendResponse(res, 500, false, 'Failed to generate payment link');
+            return sendResponse(res, 201, true, 'Checkout link created', {
+                paymentLink: init.authorization_url,
+                reference: init.reference,
+                accessCode: init.access_code,
+            });
+        } catch (error: any) {
+            console.error('[PAYSTACK] checkout-link error:', error.response?.data || error.message);
+            return sendResponse(
+                res,
+                500,
+                false,
+                error.response?.data?.message || error.message || 'Failed to generate payment link',
+            );
+        }
+    }
+
+    /** Verify Paystack payment after WebView callback. */
+    async verifyPaystackPayment(req: AuthRequest, res: Response) {
+        try {
+            const { reference, amount } = req.body || {};
+            if (!reference) {
+                return sendResponse(res, 400, false, 'Payment reference is required');
             }
 
-            return sendResponse(res, 201, true, 'Checkout link created', { paymentLink, reference: sessionRef });
+            const verified = await paystackService.verifyTransaction(String(reference));
+
+            if (!verified.paid) {
+                return sendResponse(res, 402, false, `Payment not successful (status: ${verified.status})`, {
+                    paid: false,
+                    reference: verified.reference,
+                    status: verified.status,
+                });
+            }
+
+            if (amount != null && !isNaN(Number(amount))) {
+                const expected = Number(amount);
+                // Allow 1 Naira tolerance for rounding
+                if (verified.amountNaira + 1 < expected) {
+                    return sendResponse(res, 402, false, 'Paid amount is less than order total', {
+                        paid: false,
+                        reference: verified.reference,
+                        amountPaid: verified.amountNaira,
+                        amountExpected: expected,
+                    });
+                }
+            }
+
+            return sendResponse(res, 200, true, 'Payment verified', {
+                paid: true,
+                reference: verified.reference,
+                amount: verified.amountNaira,
+                status: verified.status,
+            });
         } catch (error: any) {
-            return sendResponse(res, 500, false, error.message);
+            console.error('[PAYSTACK] verify error:', error.response?.data || error.message);
+            return sendResponse(
+                res,
+                500,
+                false,
+                error.response?.data?.message || error.message || 'Payment verification failed',
+            );
         }
     }
 

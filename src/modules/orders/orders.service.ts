@@ -9,6 +9,7 @@ import { MerchantEarningsService } from '../merchant/earnings.service';
 import { UtilityService } from '../utility/utility.service';
 import { SurgeService } from '../utility/surge.service';
 import { computeProductSurgePrice } from '../utility/product-surge.util';
+import { PaystackService } from '../payments/paystack.service';
 
 const cartService = new CartService();
 const walletService = new WalletService();
@@ -18,6 +19,7 @@ const locationService = new LocationService();
 const earningsService = new MerchantEarningsService();
 const utilityService = new UtilityService();
 const surgeService = new SurgeService();
+const paystackService = new PaystackService();
 
 export class OrdersService {
     private merchantNotificationOrderSelect =
@@ -126,11 +128,32 @@ export class OrdersService {
         const deliveryFee = deliveryEstimate.fee;
         const totalAmount = subtotal + deliveryFee;
         const paymentMethod = data.paymentMethod || 'wallet';
-        // Treat 'online_paid' as fully paid (payment confirmed by user via WebView)
+        // Treat 'online_paid' as fully paid (Paystack verified)
         const isOnlinePaid = paymentMethod === 'online_paid';
         const effectiveMethod = isOnlinePaid ? 'online' : paymentMethod;
+        const paymentReference = data.paymentReference ? String(data.paymentReference).trim() : '';
 
-        // ... (wallet check remains)
+        if (isOnlinePaid) {
+            if (!paymentReference) {
+                throw new Error('Payment reference is required for online payments');
+            }
+            const verified = await paystackService.verifyTransaction(paymentReference);
+            if (!verified.paid) {
+                throw new Error(`Payment not successful (status: ${verified.status})`);
+            }
+            // Paid amount must cover order total (1 Naira tolerance)
+            if (verified.amountNaira + 1 < totalAmount) {
+                throw new Error(
+                    `Paid amount (₦${verified.amountNaira}) is less than order total (₦${totalAmount})`,
+                );
+            }
+        }
+
+        const notesBase = data.notes || '';
+        const notesWithRef =
+            isOnlinePaid && paymentReference
+                ? `${notesBase}${notesBase ? '\n' : ''}Paystack ref: ${paymentReference}`
+                : notesBase;
 
         // 2. Create the order
         const { data: order, error: orderError } = await supabase
@@ -146,7 +169,7 @@ export class OrdersService {
                 delivery_fee: deliveryFee,
                 total_price: totalAmount,
                 status: OrderStatus.PENDING,
-                notes: data.notes || '',
+                notes: notesWithRef,
                 payment_method: effectiveMethod,
                 payment_status: (effectiveMethod === 'wallet' || isOnlinePaid) ? 'paid' : 'pending'
             }])

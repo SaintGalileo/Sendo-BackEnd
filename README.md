@@ -46,6 +46,11 @@ Edit `.env`:
 | `SUPABASE_URL` | From Supabase project settings |
 | `SUPABASE_ANON_KEY` | From Supabase project settings |
 | `GOOGLE_MAPS_API_KEY` | Distance, routes, and weather for delivery fees |
+| `PAYSTACK_SECRET_KEY` | Required for checkout “Pay online” (initialize + verify). Do not commit real keys. |
+| `PAYSTACK_PUBLIC_KEY` | Optional for the WebView flow |
+| `PAYSTACK_CALLBACK_URL` | Defaults to `https://sendo-pay-callback.netlify.app` |
+
+Wallet virtual accounts remain on Seerbit (`SEERBIT_*`); only online checkout uses Paystack.
 
 Run migrations on Supabase — see [ADMIN_MIGRATIONS.md](src/database/migrations/ADMIN_MIGRATIONS.md).
 

@@ -11,7 +11,8 @@ router.use(authMiddleware);
 router.use(roleMiddleware(['consumer'])); // Consumers initiate payments
 
 router.post('/intent', paymentsController.createIntent);
-router.post('/checkout-link', paymentsController.createSeerbitCheckout);
+router.post('/checkout-link', (req, res) => paymentsController.createCheckoutLink(req as any, res));
+router.post('/verify-paystack', (req, res) => paymentsController.verifyPaystackPayment(req as any, res));
 router.post('/confirm', paymentsController.confirmPayment);
 router.get('/history', paymentsController.getHistory);
 
