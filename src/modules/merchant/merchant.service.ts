@@ -389,9 +389,10 @@ export class MerchantOnboardingService {
             .single();
 
         if (error) throw new Error(error.message);
+        const order = data as any;
         return {
-            ...data,
-            order_type: data.fulfillment_type || data.order_type || 'delivery',
+            ...order,
+            order_type: order?.fulfillment_type || order?.order_type || 'delivery',
         };
     }
 

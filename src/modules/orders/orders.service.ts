@@ -38,9 +38,10 @@ export class OrdersService {
             .single();
 
         if (error) throw new Error(error.message);
+        const order = data as any;
         return {
-            ...data,
-            order_type: data.fulfillment_type || data.order_type || 'delivery',
+            ...order,
+            order_type: order?.fulfillment_type || order?.order_type || 'delivery',
         };
     }
 
@@ -53,9 +54,10 @@ export class OrdersService {
 
         if (error) throw new Error(error.message);
         // Compat alias for vendor app (expects order_type)
+        const order = data as any;
         return {
-            ...data,
-            order_type: data.fulfillment_type || data.order_type || 'delivery',
+            ...order,
+            order_type: order?.fulfillment_type || order?.order_type || 'delivery',
         };
     }
 
@@ -245,13 +247,17 @@ export class OrdersService {
         socketService.emitToMerchant(merchantId, 'new_order', fullOrder || {
             ...order,
             consumer: null,
-            address: {
-                id: data.addressId,
-                address: address.address,
-                latitude: address.latitude,
-                longitude: address.longitude
-            },
-            items: []
+            address: addressId
+                ? {
+                    id: addressId,
+                    address: deliveryAddress,
+                    latitude: deliveryLat,
+                    longitude: deliveryLng,
+                }
+                : null,
+            items: [],
+            fulfillment_type: fulfillmentType,
+            order_type: fulfillmentType,
         });
 
         // 7. Send Push Notification to Merchant
