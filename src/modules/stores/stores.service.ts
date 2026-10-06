@@ -29,6 +29,9 @@ const TYPE_ALIAS_MAP: Record<string, string[]> = {
 const GEO_POOL_LIMIT = 500;
 /** Soft shuffle only among the nearest N featured stores. */
 const FEATURED_SHUFFLE_POOL = 20;
+/** Short TTL cache for the featured merchant pool (per type). */
+const FEATURED_POOL_TTL_MS = 30_000;
+const featuredPoolCache = new Map<string, { at: number; promise: Promise<any[]> }>();
 
 function applyTypeFilter(query: any, type?: string) {
     if (!type || type === 'all') return query;
@@ -138,18 +141,29 @@ export class StoresService {
     }
 
     async getFeaturedStores(pagination: any, lat?: string, lng?: string, type?: string) {
-        let query = supabase
-            .from('merchants')
-            .select('*')
-            .or('verification_status.eq.verified,verified.eq.true')
-            .not('status', 'in', '("suspended","banned","deleted","rejected")');
+        const cacheKey = (type || 'all').toLowerCase().trim();
+        let entry = featuredPoolCache.get(cacheKey);
+        if (!entry || Date.now() - entry.at > FEATURED_POOL_TTL_MS) {
+            let query = supabase
+                .from('merchants')
+                .select('*')
+                .or('verification_status.eq.verified,verified.eq.true')
+                .not('status', 'in', '("suspended","banned","deleted","rejected")');
 
-        if (type) {
-            query = applyTypeFilter(query, type);
+            if (type) {
+                query = applyTypeFilter(query, type);
+            }
+
+            const promise = (async () => {
+                const { data: rows, error: err } = await query.limit(GEO_POOL_LIMIT);
+                if (err) throw new Error(err.message);
+                return rows || [];
+            })();
+            entry = { at: Date.now(), promise };
+            featuredPoolCache.set(cacheKey, entry);
+            promise.catch(() => featuredPoolCache.delete(cacheKey));
         }
-
-        const { data, error } = await query.limit(GEO_POOL_LIMIT);
-        if (error) throw new Error(error.message);
+        const data = await entry.promise;
 
         let stores = annotateAvailability(data || []);
 
