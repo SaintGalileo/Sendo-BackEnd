@@ -320,7 +320,7 @@ export class OrdersService {
                     .single();
 
                 if (!fetchError && currentOrder && currentOrder.status === OrderStatus.PENDING) {
-                    // Update status to CANCELLED
+                    // Update status to CANCELLED atomically only if still PENDING
                     const { data: updatedOrder, error: updateError } = await supabase
                         .from('orders')
                         .update({ 
@@ -328,14 +328,24 @@ export class OrdersService {
                             notes: order.notes ? `${order.notes}\nAuto-cancelled: Merchant did not accept in time` : 'Auto-cancelled: Merchant did not accept in time' 
                         })
                         .eq('id', order.id)
+                        .eq('status', OrderStatus.PENDING)
                         .select()
                         .single();
 
                     if (!updateError && updatedOrder) {
-                        // Refund if paid
+                        // Atomic refund claim: only transition 'paid' -> 'refunded' once
                         if (currentOrder.payment_status === 'paid') {
-                            await walletService.credit(currentOrder.consumer_id, currentOrder.total_price, `Refund for unaccepted order ${order.id}`);
-                            await supabase.from('orders').update({ payment_status: 'refunded' }).eq('id', order.id);
+                            const { data: refundClaim } = await supabase
+                                .from('orders')
+                                .update({ payment_status: 'refunded' })
+                                .eq('id', order.id)
+                                .eq('payment_status', 'paid')
+                                .select('id, consumer_id, total_price')
+                                .single();
+
+                            if (refundClaim) {
+                                await walletService.credit(refundClaim.consumer_id, refundClaim.total_price, `Refund for unaccepted order ${order.id}`);
+                            }
                         }
 
                         // Get full order for notifications
@@ -399,21 +409,43 @@ export class OrdersService {
         const order = await supabase.from('orders').select('*').eq('id', orderId).single();
         if (order.error) throw new Error(order.error.message);
 
+        // If order was already cancelled or declined, exit early to prevent duplicate processing
+        if (order.data.status === OrderStatus.CANCELLED) {
+            console.log(`[OrdersService] Order ${orderId} is already cancelled/declined. Ignoring duplicate decline.`);
+            return this.getHydratedOrderById(orderId);
+        }
+
+        // Atomically transition status to CANCELLED only if it is not already cancelled
         const { data, error } = await supabase
             .from('orders')
             .update({ status: OrderStatus.CANCELLED, notes: reason ? `${order.data.notes}\nDecline Reason: ${reason}` : order.data.notes })
             .eq('id', orderId)
             .eq('merchant_id', merchantId)
+            .neq('status', OrderStatus.CANCELLED)
             .select()
             .single();
 
-        if (error) throw new Error(error.message);
+        if (error || !data) {
+            console.log(`[OrdersService] Order ${orderId} decline claimed by concurrent process.`);
+            return this.getHydratedOrderById(orderId);
+        }
+
         const fullOrder = await this.getHydratedOrderById(orderId);
 
-        // If paid via wallet, refund the user
-        if (order.data.payment_method === 'wallet' && order.data.payment_status === 'paid') {
-            await walletService.credit(order.data.consumer_id, order.data.total_price, `Refund for declined order ${orderId}`);
-            await supabase.from('orders').update({ payment_status: 'refunded' }).eq('id', orderId);
+        // Atomic refund: only transition 'paid' -> 'refunded' once
+        if (order.data.payment_status === 'paid') {
+            const { data: refundClaim } = await supabase
+                .from('orders')
+                .update({ payment_status: 'refunded' })
+                .eq('id', orderId)
+                .eq('payment_status', 'paid')
+                .select('id, consumer_id, total_price, payment_method')
+                .single();
+
+            if (refundClaim) {
+                console.log(`[OrdersService] Refunding ${refundClaim.total_price} to user ${refundClaim.consumer_id} for order ${orderId}`);
+                await walletService.credit(refundClaim.consumer_id, refundClaim.total_price, `Refund for declined order ${orderId}`);
+            }
         }
 
         // Notify User via WebSocket
@@ -589,17 +621,35 @@ export class OrdersService {
                     ? `${order.notes}\nAuto-cancelled: Merchant did not accept in time`
                     : 'Auto-cancelled: Merchant did not accept in time';
 
-                await supabase
+                // Atomically update only if still PENDING
+                const { data: cancelledOrder, error: cancelError } = await supabase
                     .from('orders')
                     .update({
                         status: OrderStatus.CANCELLED,
                         notes: updatedNotes
                     })
-                    .eq('id', order.id);
+                    .eq('id', order.id)
+                    .eq('status', OrderStatus.PENDING)
+                    .select()
+                    .single();
 
+                if (cancelError || !cancelledOrder) {
+                    continue; // Already processed
+                }
+
+                // Atomic refund claim
                 if (order.payment_status === 'paid') {
-                    await walletService.credit(order.consumer_id, order.total_price, `Refund for unaccepted order ${order.id}`);
-                    await supabase.from('orders').update({ payment_status: 'refunded' }).eq('id', order.id);
+                    const { data: refundClaim } = await supabase
+                        .from('orders')
+                        .update({ payment_status: 'refunded' })
+                        .eq('id', order.id)
+                        .eq('payment_status', 'paid')
+                        .select('id, consumer_id, total_price')
+                        .single();
+
+                    if (refundClaim) {
+                        await walletService.credit(refundClaim.consumer_id, refundClaim.total_price, `Refund for unaccepted order ${order.id}`);
+                    }
                 }
 
                 try {
@@ -659,15 +709,36 @@ export class OrdersService {
             throw new Error(`Cannot cancel order in ${order.status} status`);
         }
 
+        // Atomically cancel only if still in cancellable status
         const { data, error } = await supabase
             .from('orders')
             .update({ status: OrderStatus.CANCELLED })
             .eq('id', orderId)
             .eq('consumer_id', userId)
+            .in('status', [OrderStatus.PENDING, OrderStatus.ACCEPTED])
             .select()
             .single();
 
-        if (error) throw new Error(error.message);
+        if (error || !data) {
+            console.log(`[OrdersService] Order ${orderId} cancellation already processed.`);
+            return this.getHydratedOrderById(orderId);
+        }
+
+        // Atomic refund claim if paid
+        if (order.payment_status === 'paid') {
+            const { data: refundClaim } = await supabase
+                .from('orders')
+                .update({ payment_status: 'refunded' })
+                .eq('id', orderId)
+                .eq('payment_status', 'paid')
+                .select('id, consumer_id, total_price')
+                .single();
+
+            if (refundClaim) {
+                await walletService.credit(refundClaim.consumer_id, refundClaim.total_price, `Refund for cancelled order ${orderId}`);
+            }
+        }
+
         socketService.emitToAvailableDrivers('available_order_cancelled', { orderId: data.id });
         return this.getHydratedOrderById(orderId);
     }
