@@ -137,6 +137,7 @@ export class OrdersService {
         }
 
         let subtotal = 0;
+        let merchantSubtotal = 0;
         const surgePercentage = await utilityService.getProductSurgePercentage();
 
         const orderItemsData = cartItems.map((item: any) => {
@@ -145,6 +146,9 @@ export class OrdersService {
             const extraCost = (item.extras || []).reduce((sum: number, ext: any) => sum + (ext.price || 0), 0);
             const itemTotal = (price + extraCost) * item.quantity;
             subtotal += itemTotal;
+
+            const merchantItemTotal = (basePrice + extraCost) * item.quantity;
+            merchantSubtotal += merchantItemTotal;
 
             return {
                 product_id: item.product_id,
@@ -218,6 +222,7 @@ export class OrdersService {
             delivery_lat: deliveryLat,
             delivery_lng: deliveryLng,
             subtotal,
+            merchant_subtotal: merchantSubtotal,
             delivery_fee: deliveryFee,
             total_price: totalAmount,
             status: OrderStatus.PENDING,
@@ -236,8 +241,13 @@ export class OrdersService {
             .select()
             .single();
 
-        // Graceful fallback if merchant_notes or rider_notes columns do not exist yet in Supabase
-        if (orderError && (orderError.message?.includes('merchant_notes') || orderError.message?.includes('rider_notes') || (orderError as any).code === 'PGRST204')) {
+        // Graceful fallback if merchant_notes, rider_notes, or merchant_subtotal columns do not exist yet in Supabase
+        if (orderError && (
+            orderError.message?.includes('merchant_notes') || 
+            orderError.message?.includes('rider_notes') || 
+            orderError.message?.includes('merchant_subtotal') || 
+            (orderError as any).code === 'PGRST204'
+        )) {
             const combinedNotes = [
                 merchantNotesBase ? `[Store]: ${merchantNotesBase}` : '',
                 riderNotesBase ? `[Rider]: ${riderNotesBase}` : ''
@@ -245,6 +255,7 @@ export class OrdersService {
 
             delete orderPayload.merchant_notes;
             delete orderPayload.rider_notes;
+            delete orderPayload.merchant_subtotal;
             orderPayload.notes = combinedNotes;
 
             const fallbackRes = await supabase
@@ -321,16 +332,29 @@ export class OrdersService {
 
                 if (!fetchError && currentOrder && currentOrder.status === OrderStatus.PENDING) {
                     // Update status to CANCELLED atomically only if still PENDING
-                    const { data: updatedOrder, error: updateError } = await supabase
+                    let updateRes = await supabase
                         .from('orders')
                         .update({ 
                             status: OrderStatus.CANCELLED, 
-                            notes: order.notes ? `${order.notes}\nAuto-cancelled: Merchant did not accept in time` : 'Auto-cancelled: Merchant did not accept in time' 
+                            cancellation_reason: 'Auto-cancelled: Merchant did not accept in time'
                         })
                         .eq('id', order.id)
                         .eq('status', OrderStatus.PENDING)
                         .select()
                         .single();
+
+                    if (updateRes.error && (updateRes.error.message?.includes('cancellation_reason') || (updateRes.error as any).code === 'PGRST204')) {
+                        updateRes = await supabase
+                            .from('orders')
+                            .update({ status: OrderStatus.CANCELLED })
+                            .eq('id', order.id)
+                            .eq('status', OrderStatus.PENDING)
+                            .select()
+                            .single();
+                    }
+
+                    const updatedOrder = updateRes.data;
+                    const updateError = updateRes.error;
 
                     if (!updateError && updatedOrder) {
                         // Atomic refund claim: only transition 'paid' -> 'refunded' once
@@ -415,15 +439,32 @@ export class OrdersService {
             return this.getHydratedOrderById(orderId);
         }
 
-        // Atomically transition status to CANCELLED only if it is not already cancelled
-        const { data, error } = await supabase
+        const declineReason = reason || 'Declined by merchant';
+
+        // Atomically transition status to CANCELLED and store cancellation_reason
+        let { data, error } = await supabase
             .from('orders')
-            .update({ status: OrderStatus.CANCELLED, notes: reason ? `${order.data.notes}\nDecline Reason: ${reason}` : order.data.notes })
+            .update({ status: OrderStatus.CANCELLED, cancellation_reason: declineReason })
             .eq('id', orderId)
             .eq('merchant_id', merchantId)
             .neq('status', OrderStatus.CANCELLED)
             .select()
             .single();
+
+        // Graceful fallback if cancellation_reason column does not exist yet in Supabase
+        if (error && (error.message?.includes('cancellation_reason') || (error as any).code === 'PGRST204')) {
+            console.log(`[OrdersService] cancellation_reason column not present yet, falling back to status update`);
+            const fallbackRes = await supabase
+                .from('orders')
+                .update({ status: OrderStatus.CANCELLED })
+                .eq('id', orderId)
+                .eq('merchant_id', merchantId)
+                .neq('status', OrderStatus.CANCELLED)
+                .select()
+                .single();
+            data = fallbackRes.data;
+            error = fallbackRes.error;
+        }
 
         if (error || !data) {
             console.log(`[OrdersService] Order ${orderId} decline claimed by concurrent process.`);
@@ -431,6 +472,9 @@ export class OrdersService {
         }
 
         const fullOrder = await this.getHydratedOrderById(orderId);
+        if (!(fullOrder as any).cancellation_reason) {
+            (fullOrder as any).cancellation_reason = declineReason;
+        }
 
         // Atomic refund: only transition 'paid' -> 'refunded' once
         if (order.data.payment_status === 'paid') {
@@ -559,13 +603,30 @@ export class OrdersService {
         // --- Earnings Distribution ---
         if (status === OrderStatus.DELIVERED && existingOrder?.status !== OrderStatus.DELIVERED) {
             try {
-                const percentage = await utilityService.getCommissionPercentage();
-                const commissionRate = percentage / 100;
-                const subtotal = data.subtotal || 0;
-                const commissionAmount = subtotal * commissionRate;
-                const merchantShare = subtotal - commissionAmount;
+                // In our model, vendors are not charged commission; customers pay the surge fee on top.
+                // The vendor receives 100% of their base price + extras.
+                let merchantShare = Number(data.merchant_subtotal || 0);
 
-                console.log(`[OrdersService] Distributing earnings for order ${orderId}: Subtotal=₦${subtotal}, Fee(${percentage}%)=₦${commissionAmount}, MerchantShare=₦${merchantShare}`);
+                if (!merchantShare) {
+                    const { data: orderItems } = await supabase
+                        .from('order_items')
+                        .select('quantity, price, extras, product:products(price)')
+                        .eq('order_id', orderId);
+
+                    if (orderItems && orderItems.length > 0) {
+                        merchantShare = orderItems.reduce((sum: number, it: any) => {
+                            const basePrice = it.product?.price != null ? Number(it.product.price) : Number(it.price || 0);
+                            const extraCost = (it.extras || []).reduce((s: number, ext: any) => s + (Number(ext.price) || 0), 0);
+                            return sum + (basePrice + extraCost) * (it.quantity || 1);
+                        }, 0);
+                    } else {
+                        merchantShare = Number(data.subtotal || 0);
+                    }
+                }
+
+                merchantShare = Math.round(merchantShare * 100) / 100;
+
+                console.log(`[OrdersService] Crediting vendor earnings for order ${orderId}: MerchantShare=₦${merchantShare} (Customer paid ₦${data.total_price}, subtotal ₦${data.subtotal})`);
                 await earningsService.addEarning(data.merchant_id, merchantShare);
 
                 const { data: merchantStore } = await supabase
@@ -575,12 +636,12 @@ export class OrdersService {
                     .single();
 
                 if (merchantStore && merchantStore.user_id) {
-                    const notifyMessage = `Customer bought items worth ₦${subtotal.toLocaleString()}. Platform fee (${percentage}%): ₦${commissionAmount.toLocaleString()}. ₦${merchantShare.toLocaleString()} credited to your balance.`;
+                    const notifyMessage = `Order completed! ₦${merchantShare.toLocaleString()} has been credited to your balance.`;
 
                     socketService.emitToUser(merchantStore.user_id, 'merchant_earning_credited', {
-                        subtotal,
-                        commissionPercentage: percentage,
-                        commissionAmount,
+                        subtotal: merchantShare,
+                        commissionPercentage: 0,
+                        commissionAmount: 0,
                         merchantShare,
                         message: notifyMessage,
                     });
@@ -617,21 +678,30 @@ export class OrdersService {
             if (error || !staleOrders || staleOrders.length === 0) return;
 
             for (const order of staleOrders) {
-                const updatedNotes = order.notes
-                    ? `${order.notes}\nAuto-cancelled: Merchant did not accept in time`
-                    : 'Auto-cancelled: Merchant did not accept in time';
-
                 // Atomically update only if still PENDING
-                const { data: cancelledOrder, error: cancelError } = await supabase
+                let cancelRes = await supabase
                     .from('orders')
                     .update({
                         status: OrderStatus.CANCELLED,
-                        notes: updatedNotes
+                        cancellation_reason: 'Auto-cancelled: Merchant did not accept in time'
                     })
                     .eq('id', order.id)
                     .eq('status', OrderStatus.PENDING)
                     .select()
                     .single();
+
+                if (cancelRes.error && (cancelRes.error.message?.includes('cancellation_reason') || (cancelRes.error as any).code === 'PGRST204')) {
+                    cancelRes = await supabase
+                        .from('orders')
+                        .update({ status: OrderStatus.CANCELLED })
+                        .eq('id', order.id)
+                        .eq('status', OrderStatus.PENDING)
+                        .select()
+                        .single();
+                }
+
+                const cancelledOrder = cancelRes.data;
+                const cancelError = cancelRes.error;
 
                 if (cancelError || !cancelledOrder) {
                     continue; // Already processed
@@ -710,14 +780,31 @@ export class OrdersService {
         }
 
         // Atomically cancel only if still in cancellable status
-        const { data, error } = await supabase
+        let cancelRes = await supabase
             .from('orders')
-            .update({ status: OrderStatus.CANCELLED })
+            .update({ 
+                status: OrderStatus.CANCELLED,
+                cancellation_reason: 'Cancelled by customer'
+            })
             .eq('id', orderId)
             .eq('consumer_id', userId)
             .in('status', [OrderStatus.PENDING, OrderStatus.ACCEPTED])
             .select()
             .single();
+
+        if (cancelRes.error && (cancelRes.error.message?.includes('cancellation_reason') || (cancelRes.error as any).code === 'PGRST204')) {
+            cancelRes = await supabase
+                .from('orders')
+                .update({ status: OrderStatus.CANCELLED })
+                .eq('id', orderId)
+                .eq('consumer_id', userId)
+                .in('status', [OrderStatus.PENDING, OrderStatus.ACCEPTED])
+                .select()
+                .single();
+        }
+
+        const data = cancelRes.data;
+        const error = cancelRes.error;
 
         if (error || !data) {
             console.log(`[OrdersService] Order ${orderId} cancellation already processed.`);

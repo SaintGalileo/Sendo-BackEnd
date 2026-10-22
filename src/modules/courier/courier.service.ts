@@ -317,12 +317,31 @@ export class CourierService {
         // If delivered, calculate earnings
         if (status === OrderStatus.DELIVERED && existingOrder?.status !== OrderStatus.DELIVERED) {
             await this.addEarning(profile.id, data.delivery_fee * 0.8, orderId); // Assuming courier gets 80%
-            const percentage = await this.utilityService.getCommissionPercentage();
-            const commissionRate = percentage / 100;
-            const subtotal = Number(data.subtotal || 0);
-            const commissionAmount = subtotal * commissionRate;
-            const merchantShare = subtotal - commissionAmount;
 
+            // In our model, vendors are not charged commission; customers pay the surge fee on top.
+            // The vendor receives 100% of their base price + extras.
+            let merchantShare = Number(data.merchant_subtotal || 0);
+
+            if (!merchantShare) {
+                const { data: orderItems } = await supabase
+                    .from('order_items')
+                    .select('quantity, price, extras, product:products(price)')
+                    .eq('order_id', orderId);
+
+                if (orderItems && orderItems.length > 0) {
+                    merchantShare = orderItems.reduce((sum: number, it: any) => {
+                        const basePrice = it.product?.price != null ? Number(it.product.price) : Number(it.price || 0);
+                        const extraCost = (it.extras || []).reduce((s: number, ext: any) => s + (Number(ext.price) || 0), 0);
+                        return sum + (basePrice + extraCost) * (it.quantity || 1);
+                    }, 0);
+                } else {
+                    merchantShare = Number(data.subtotal || 0);
+                }
+            }
+
+            merchantShare = Math.round(merchantShare * 100) / 100;
+
+            console.log(`[CourierService] Crediting vendor earnings for order ${orderId}: MerchantShare=₦${merchantShare} (Customer paid ₦${data.total_price}, subtotal ₦${data.subtotal})`);
             await this.merchantEarningsService.addEarning(data.merchant_id, merchantShare);
 
             const { data: merchantStore } = await supabase
@@ -332,12 +351,12 @@ export class CourierService {
                 .single();
 
             if (merchantStore && merchantStore.user_id) {
-                const notifyMessage = `Customer bought items worth ₦${subtotal.toLocaleString()}. Platform fee (${percentage}%): ₦${commissionAmount.toLocaleString()}. ₦${merchantShare.toLocaleString()} credited to your balance.`;
+                const notifyMessage = `Order completed! ₦${merchantShare.toLocaleString()} has been credited to your balance.`;
 
                 this.socketService.emitToUser(merchantStore.user_id, 'merchant_earning_credited', {
-                    subtotal,
-                    commissionPercentage: percentage,
-                    commissionAmount,
+                    subtotal: merchantShare,
+                    commissionPercentage: 0,
+                    commissionAmount: 0,
                     merchantShare,
                     message: notifyMessage,
                 });
