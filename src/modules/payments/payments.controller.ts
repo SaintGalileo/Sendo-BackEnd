@@ -186,11 +186,155 @@ export class PaymentsController {
 
     async getWallet(req: AuthRequest, res: Response) {
         try {
-            const wallet = await walletService.getOrCreateWallet(req.user.id);
-            // Optionally include transactions if needed, for now just the wallet
+            const forceRefresh = req.query.refresh === 'true';
+            const wallet = await walletService.getOrCreateWallet(req.user.id, forceRefresh);
             return sendResponse(res, 200, true, 'Wallet fetched successfully', wallet);
         } catch (error: any) {
             return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async refreshWalletAccount(req: AuthRequest, res: Response) {
+        try {
+            const wallet = await walletService.refreshVirtualAccount(req.user.id);
+            return sendResponse(res, 200, true, 'Wallet virtual account refreshed successfully', wallet);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
+    async handlePaystackWebhook(req: Request, res: Response) {
+        try {
+            const secret = process.env.PAYSTACK_SECRET_KEY || '';
+            const signature = req.headers['x-paystack-signature'];
+
+            if (secret && signature) {
+                const crypto = require('crypto');
+                const hash = crypto.createHmac('sha512', secret).update(JSON.stringify(req.body)).digest('hex');
+                if (hash !== signature) {
+                    console.warn('[PAYSTACK_WEBHOOK] Signature mismatch.');
+                    return res.status(400).json({ message: 'Invalid signature' });
+                }
+            }
+
+            const event = req.body?.event;
+            const data = req.body?.data;
+
+            console.log(`[PAYSTACK_WEBHOOK] Received event: ${event}`);
+
+            if (event === 'charge.success' && data && data.status === 'success') {
+                const amountKobo = Number(data.amount) || 0;
+                const parsedAmount = amountKobo / 100;
+                const reference = String(data.reference || '');
+                const customerEmail = data.customer?.email?.toLowerCase();
+                const customerCode = data.customer?.customer_code;
+                const channel = data.channel;
+
+                console.log(`[PAYSTACK_WEBHOOK] Processing charge.success: Ref=${reference}, Amount=₦${parsedAmount}, Channel=${channel}, Email=${customerEmail}`);
+
+                // 1. Order Checkout Payment
+                const orderId = (data.metadata?.order_id || data.metadata?.orderId) ||
+                    (reference.startsWith('ORDER_') ? reference.split('ORDER_')[1] : null);
+
+                if (orderId) {
+                    console.log(`[PAYSTACK_WEBHOOK] Processing payment for Order ID: ${orderId}`);
+                    const { data: order, error: orderError } = await supabase
+                        .from('orders')
+                        .update({ payment_status: 'paid' })
+                        .eq('id', orderId)
+                        .select('id, consumer_id')
+                        .single();
+
+                    if (!orderError && order) {
+                        const notificationsService = new (require('../notifications/notifications.service').NotificationsService)();
+                        await notificationsService.sendPushNotification(
+                            order.consumer_id,
+                            'Payment Successful!',
+                            `Your payment for order #${orderId.slice(0, 8)} was successful.`
+                        ).catch((err: any) => console.error('[PAYSTACK_WEBHOOK] Push notification error:', err));
+                    }
+                    return res.status(200).json({ status: 'SUCCESS' });
+                }
+
+                // 2. Dedicated Virtual Account Wallet Funding
+                const dvaAccountNumber = data.dedicated_account?.account_number || data.authorization?.account_number;
+
+                let wallet: any = null;
+
+                if (dvaAccountNumber) {
+                    const { data: w } = await supabase
+                        .from('wallets')
+                        .select('id, user_id, balance')
+                        .eq('account_number', dvaAccountNumber)
+                        .maybeSingle();
+                    wallet = w;
+                }
+
+                if (!wallet && customerCode) {
+                    const { data: w } = await supabase
+                        .from('wallets')
+                        .select('id, user_id, balance')
+                        .eq('reference', customerCode)
+                        .maybeSingle();
+                    wallet = w;
+                }
+
+                if (!wallet && customerEmail) {
+                    const { data: user } = await supabase
+                        .from('users')
+                        .select('id')
+                        .eq('email', customerEmail)
+                        .maybeSingle();
+
+                    if (user?.id) {
+                        const { data: w } = await supabase
+                            .from('wallets')
+                            .select('id, user_id, balance')
+                            .eq('user_id', user.id)
+                            .maybeSingle();
+                        wallet = w;
+                    }
+                }
+
+                if (!wallet && data.metadata?.user_id) {
+                    const { data: w } = await supabase
+                        .from('wallets')
+                        .select('id, user_id, balance')
+                        .eq('user_id', data.metadata.user_id)
+                        .maybeSingle();
+                    wallet = w;
+                }
+
+                if (!wallet) {
+                    console.error(`[PAYSTACK_WEBHOOK] Wallet NOT FOUND for DVA ${dvaAccountNumber}, ref ${reference}, or email ${customerEmail}`);
+                    return res.status(200).json({ status: 'ACK_WALLET_NOT_FOUND' });
+                }
+
+                // Credit the wallet
+                const creditDesc = `Paystack Funding: ${dvaAccountNumber || reference}`;
+                await walletService.credit(wallet.user_id, parsedAmount, creditDesc);
+
+                // Notification email
+                if (customerEmail) {
+                    await emailService.sendEmail(customerEmail, 'Wallet Funded!', `
+                        <p>Your Sendo wallet has been credited with <b>₦${parsedAmount.toLocaleString()}</b>.</p>
+                        <p>New balance: <b>₦${(Number(wallet.balance) + parsedAmount).toLocaleString()}</b></p>
+                    `).catch((err: any) => console.error('[PAYSTACK_WEBHOOK] Failed to send email:', err));
+                }
+
+                // Notification push
+                const notificationsService = new (require('../notifications/notifications.service').NotificationsService)();
+                await notificationsService.sendPushNotification(
+                    wallet.user_id,
+                    'Wallet Funded!',
+                    `Your wallet has been credited with ₦${parsedAmount.toLocaleString()}. New balance: ₦${(Number(wallet.balance) + parsedAmount).toLocaleString()}`
+                ).catch((err: any) => console.error('[PAYSTACK_WEBHOOK] Failed to send push notification:', err));
+            }
+
+            return res.status(200).json({ status: 'SUCCESS' });
+        } catch (error: any) {
+            console.error('[PAYSTACK_WEBHOOK] Error processing webhook:', error);
+            return res.status(200).json({ status: 'ERROR_PROCESSED', message: error.message });
         }
     }
 

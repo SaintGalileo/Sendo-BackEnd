@@ -23,7 +23,9 @@ import serviceabilityRoutes from '../modules/serviceability/serviceability.route
 const router = Router();
 const paymentsController = new PaymentsController();
 
-// Public Webhook (MUST be before any auth middleware)
+// Public Webhooks (MUST be before any auth middleware)
+router.post('/payments/webhook/paystack', (req, res) => paymentsController.handlePaystackWebhook(req, res));
+router.post('/webhook/paystack', (req, res) => paymentsController.handlePaystackWebhook(req, res));
 router.post('/payments/webhook/seerbit', paymentsController.handleSeerBitWebhook);
 
 // Existing Auth

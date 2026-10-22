@@ -1,10 +1,10 @@
 import { supabase } from '../../config/supabase';
-import { SeerBitService } from './seerbit.service';
+import { PaystackService } from './paystack.service';
 
-const seerbitService = new SeerBitService();
+const paystackService = new PaystackService();
 
 export class WalletService {
-    async getOrCreateWallet(userId: string) {
+    async getOrCreateWallet(userId: string, forceRefresh = false) {
         const { data, error } = await supabase
             .from('wallets')
             .select('*')
@@ -20,68 +20,78 @@ export class WalletService {
 
             if (createError) throw new Error(createError.message);
 
-            // Trigger SeerBit account creation for new wallet
-            return await this.ensureSeerBitAccount(userId, newWallet);
+            // Trigger Paystack dedicated account creation for new wallet
+            return await this.ensurePaystackAccount(userId, newWallet);
         }
 
         if (error) throw new Error(error.message);
 
-        // If wallet exists but lacks account details, trigger it
-        if (!data.account_number) {
-            return await this.ensureSeerBitAccount(userId, data);
+        // If wallet exists but lacks account details or refresh forced
+        if (!data.account_number || forceRefresh) {
+            return await this.ensurePaystackAccount(userId, data);
         }
 
         return data;
     }
 
-    private async ensureSeerBitAccount(userId: string, wallet: any) {
+    async refreshVirtualAccount(userId: string) {
+        const wallet = await this.getOrCreateWallet(userId, false);
+        return await this.ensurePaystackAccount(userId, wallet);
+    }
+
+    private async ensurePaystackAccount(userId: string, wallet: any) {
         try {
-            console.log(`[WALLET] Ensuring SeerBit account for user ${userId}`);
-            // Fetch user details for SeerBit
+            console.log(`[WALLET] Ensuring Paystack dedicated account for user ${userId}`);
+            // Fetch user details for Paystack customer creation
             const { data: user, error: userError } = await supabase
                 .from('users')
-                .select('first_name, last_name, email')
+                .select('first_name, last_name, email, phone')
                 .eq('id', userId)
                 .single();
 
             if (userError || !user) {
-                console.error(`[WALLET] Failed to fetch user ${userId} for SeerBit:`, userError);
+                console.error(`[WALLET] Failed to fetch user ${userId} for Paystack:`, userError);
                 return wallet;
             }
 
-            const fullName = `${user.first_name} ${user.last_name}`;
-            const email = user.email || 'no-email@sendo.com';
-            const reference = `WAL_${userId.split('-')[0]}_${Date.now()}`;
+            const firstName = user.first_name || 'Sendo';
+            const lastName = user.last_name || 'User';
+            const email = user.email || `${userId}@sendo.express`;
+            const phone = user.phone || undefined;
 
-            console.log(`[WALLET] Calling SeerBit for ${fullName} (${email}) with ref ${reference}`);
-            const seerbitResponse = await seerbitService.createVirtualAccount(fullName, email, reference);
+            console.log(`[WALLET] Calling Paystack DVA for ${firstName} ${lastName} (${email})`);
+            const paystackResponse = await paystackService.createDedicatedVirtualAccount({
+                email,
+                firstName,
+                lastName,
+                phone,
+            });
 
-            if (seerbitResponse) {
-                const { payments } = seerbitResponse.data;
-                console.log(`[WALLET] SeerBit account created: ${payments.accountNumber} (${payments.bankName})`);
+            if (paystackResponse && paystackResponse.accountNumber) {
+                console.log(`[WALLET] Paystack account created: ${paystackResponse.accountNumber} (${paystackResponse.bankName})`);
                 const { data: updatedWallet, error: updateError } = await supabase
                     .from('wallets')
                     .update({
-                        account_number: payments.accountNumber,
-                        bank_name: payments.bankName,
-                        account_name: `${payments.walletName}/${fullName}`,
-                        reference: payments.reference
+                        account_number: paystackResponse.accountNumber,
+                        bank_name: paystackResponse.bankName,
+                        account_name: paystackResponse.accountName,
+                        reference: paystackResponse.reference || paystackResponse.customerCode,
                     })
                     .eq('id', wallet.id)
                     .select()
                     .single();
 
                 if (updateError) {
-                    console.error('[WALLET] Failed to update wallet with SeerBit details:', updateError);
+                    console.error('[WALLET] Failed to update wallet with Paystack details:', updateError);
                     return wallet;
                 }
                 return updatedWallet;
             }
 
-            console.warn(`[WALLET] SeerBit account creation failed for user ${userId}, check SeerBit service logs.`);
+            console.warn(`[WALLET] Paystack account creation returned empty for user ${userId}`);
             return wallet;
-        } catch (error) {
-            console.error('[WALLET] Error in ensureSeerBitAccount:', error);
+        } catch (error: any) {
+            console.error('[WALLET] Error in ensurePaystackAccount:', error.response?.data || error.message);
             return wallet;
         }
     }
