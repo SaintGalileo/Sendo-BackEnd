@@ -147,24 +147,76 @@ export class NotificationsService {
                 return null;
             }
 
-            // 2. Prepare message
-            const message = {
+            // 2. Prepare stringified data for FCM
+            const fcmData: Record<string, string> = {
+                merchantId: String(merchantId),
+            };
+            if (data && typeof data === 'object') {
+                Object.keys(data).forEach(k => {
+                    if (data[k] !== undefined && data[k] !== null) {
+                        fcmData[k] = String(data[k]);
+                    }
+                });
+            }
+
+            // 3. Prepare high-priority message for Android (channel order-alerts) & iOS
+            const buildMessage = (targetToken: string) => ({
                 notification: {
                     title,
                     body,
                 },
-                data: {
-                    merchantId: String(merchantId),
-                    ...(data || {}),
+                data: fcmData,
+                android: {
+                    priority: 'high' as const,
+                    notification: {
+                        channelId: 'order-alerts',
+                        sound: 'order',
+                        defaultSound: false,
+                        priority: 'max' as const,
+                        visibility: 'public' as const,
+                    },
                 },
-                token: pushToken,
-            };
+                apns: {
+                    headers: {
+                        'apns-priority': '10',
+                    },
+                    payload: {
+                        aps: {
+                            sound: 'order.wav',
+                            badge: 1,
+                            contentAvailable: true,
+                        },
+                    },
+                },
+                token: targetToken,
+            });
 
-            // 3. Send via Firebase
-            const response = await messaging.send(message);
-            console.log(`[Push to Merchant] Successfully sent push notification to merchant ${store.name} (${merchantId}):`, response);
+            // 4. Send via Firebase
+            let response = null;
+            try {
+                response = await messaging.send(buildMessage(pushToken));
+                console.log(`[Push to Merchant] Successfully sent push notification to store ${store.name} (${merchantId}):`, response);
+            } catch (primaryErr: any) {
+                console.warn(`[Push to Merchant] Primary token failed: ${primaryErr.message}`);
+                // Try fallback to user's fcm_token if different
+                if (store.user_id) {
+                    const { data: user } = await supabase
+                        .from('users')
+                        .select('fcm_token')
+                        .eq('id', store.user_id)
+                        .single();
+                    if (user?.fcm_token && user.fcm_token !== pushToken) {
+                        try {
+                            response = await messaging.send(buildMessage(user.fcm_token));
+                            console.log(`[Push to Merchant] Fallback token succeeded:`, response);
+                        } catch (fallbackErr: any) {
+                            console.error(`[Push to Merchant] Fallback token failed: ${fallbackErr.message}`);
+                        }
+                    }
+                }
+            }
 
-            // 4. Optionally log to notifications table
+            // 5. Optionally log to notifications table
             if (store.user_id) {
                 await supabase.from('notifications').insert([{
                     user_id: store.user_id,

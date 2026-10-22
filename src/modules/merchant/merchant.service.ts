@@ -401,6 +401,7 @@ export class MerchantOnboardingService {
         const to = from + pagination.limit - 1;
 
         const ongoingStatuses = [
+            OrderStatus.PENDING,
             OrderStatus.ACCEPTED,
             OrderStatus.PREPARING,
             OrderStatus.READY_FOR_PICKUP,
