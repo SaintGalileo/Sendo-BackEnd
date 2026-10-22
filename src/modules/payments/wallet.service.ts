@@ -26,12 +26,27 @@ export class WalletService {
 
         if (error) throw new Error(error.message);
 
-        // If wallet exists but lacks account details or refresh forced
-        if (!data.account_number || forceRefresh) {
+        // If wallet lacks account details, or is an old legacy Seerbit account, or refresh is forced
+        const isLegacy = this.isLegacySeerbitAccount(data);
+        if (!data.account_number || isLegacy || forceRefresh) {
+            console.log(`[WALLET] Wallet for ${userId} needs Paystack migration (isLegacy=${isLegacy}, hasAccount=${Boolean(data.account_number)})`);
             return await this.ensurePaystackAccount(userId, data);
         }
 
         return data;
+    }
+
+    private isLegacySeerbitAccount(wallet: any): boolean {
+        if (!wallet || !wallet.account_number) return true;
+        const ref = String(wallet.reference || '');
+        const name = String(wallet.account_name || '');
+        const bank = String(wallet.bank_name || '').toLowerCase();
+        return (
+            ref.startsWith('WAL_') ||
+            name.includes('SBT') ||
+            name.includes('(Mozzenta)') ||
+            bank.includes('9payment')
+        );
     }
 
     async refreshVirtualAccount(userId: string) {
@@ -42,6 +57,12 @@ export class WalletService {
     private async ensurePaystackAccount(userId: string, wallet: any) {
         try {
             console.log(`[WALLET] Ensuring Paystack dedicated account for user ${userId}`);
+
+            if (!process.env.PAYSTACK_SECRET_KEY) {
+                console.warn('[WALLET] PAYSTACK_SECRET_KEY is not set in environment! Cannot create Paystack DVA.');
+                return wallet;
+            }
+
             // Fetch user details for Paystack customer creation
             const { data: user, error: userError } = await supabase
                 .from('users')

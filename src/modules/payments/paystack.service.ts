@@ -140,7 +140,8 @@ export class PaystackService {
                 }
             } catch (dvaErr: any) {
                 lastError = dvaErr;
-                console.warn(`[PAYSTACK_DVA] Failed with preferred_bank '${bank}':`, dvaErr.response?.data?.message || dvaErr.message);
+                const errData = dvaErr.response?.data;
+                console.warn(`[PAYSTACK_DVA] Failed with preferred_bank '${bank}':`, JSON.stringify(errData || dvaErr.message));
             }
         }
 
@@ -170,10 +171,11 @@ export class PaystackService {
                 };
             }
         } catch (assignErr: any) {
-            console.warn('[PAYSTACK_DVA] dedicated_account/assign error:', assignErr.response?.data?.message || assignErr.message);
+            console.warn('[PAYSTACK_DVA] dedicated_account/assign error:', JSON.stringify(assignErr.response?.data || assignErr.message));
         }
 
-        throw lastError || new Error('Failed to create Paystack dedicated virtual account');
+        const failureReason = lastError?.response?.data?.message || lastError?.message || 'Failed to create Paystack dedicated virtual account';
+        throw new Error(failureReason);
     }
 
     /**
