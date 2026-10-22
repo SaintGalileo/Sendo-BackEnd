@@ -13,7 +13,7 @@ async function testEmail() {
     console.log('Attempting to send test email to saintgalileo144@gmail.com...');
     try {
         const { data, error } = await resend.emails.send({
-            from: 'Sendo <onboarding@resend.dev>',
+            from: process.env.RESEND_FROM_EMAIL || 'Sendo <onboarding@sendo.express>',
             to: 'saintgalileo144@gmail.com',
             subject: 'Test OTP Email',
             html: '<h1>Your OTP is 123456</h1>',

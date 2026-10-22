@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 export class EmailService {
-    private static fromEmail = 'Sendo <onboarding@resend.dev>'; // Replace with verified domain in production
+    private static fromEmail = process.env.RESEND_FROM_EMAIL || process.env.EMAIL_FROM || 'Sendo <onboarding@sendo.express>';
     private static termiiUrl = 'https://api.ng.termii.com/api/email/otp/send';
 
     async sendEmail(email: string, title: string, content: string): Promise<{ success: boolean; message: string }> {
@@ -36,8 +36,9 @@ export class EmailService {
 
         // Default to Resend for non-OTP or if Termii is not configured/fails
         try {
+            const from = process.env.RESEND_FROM_EMAIL || process.env.EMAIL_FROM || EmailService.fromEmail;
             const { data, error } = await resend.emails.send({
-                from: EmailService.fromEmail,
+                from,
                 to: email,
                 subject: title,
                 html: `
@@ -52,14 +53,14 @@ export class EmailService {
 
             if (error) {
                 console.error('Resend API Error:', error);
-                return { success: false, message: 'Failed to send email' };
+                return { success: false, message: error.message || 'Failed to send email' };
             }
 
-            console.log(`[EMAIL] Email "${title}" sent to ${email} via Resend. ID: ${data?.id}`);
+            console.log(`[EMAIL] Email "${title}" sent to ${email} from ${from} via Resend. ID: ${data?.id}`);
             return { success: true, message: 'Email sent successfully via Resend' };
         } catch (err: any) {
             console.error('Email Service Error:', err);
-            return { success: false, message: 'Internal server error during email delivery' };
+            return { success: false, message: err.message || 'Internal server error during email delivery' };
         }
     }
 }
