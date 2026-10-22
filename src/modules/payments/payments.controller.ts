@@ -257,7 +257,11 @@ export class PaymentsController {
                 }
 
                 // 2. Dedicated Virtual Account Wallet Funding
-                const dvaAccountNumber = data.dedicated_account?.account_number || data.authorization?.account_number;
+                const dvaAccountNumber =
+                    data.dedicated_account?.account_number ||
+                    data.authorization?.receiver_bank_account_number ||
+                    data.metadata?.receiver_account_number ||
+                    data.authorization?.account_number;
 
                 let wallet: any = null;
 
@@ -265,7 +269,7 @@ export class PaymentsController {
                     const { data: w } = await supabase
                         .from('wallets')
                         .select('id, user_id, balance')
-                        .eq('account_number', dvaAccountNumber)
+                        .eq('account_number', String(dvaAccountNumber))
                         .maybeSingle();
                     wallet = w;
                 }
@@ -310,25 +314,69 @@ export class PaymentsController {
                     return res.status(200).json({ status: 'ACK_WALLET_NOT_FOUND' });
                 }
 
+                // Check idempotency: avoid double-crediting if webhook is retried
+                if (reference) {
+                    const { data: existingTxn } = await supabase
+                        .from('wallet_transactions')
+                        .select('id')
+                        .eq('wallet_id', wallet.id)
+                        .ilike('description', `%${reference}%`)
+                        .maybeSingle();
+
+                    if (existingTxn) {
+                        console.log(`[PAYSTACK_WEBHOOK] Transaction with reference ${reference} already processed.`);
+                        return res.status(200).json({ status: 'ALREADY_PROCESSED' });
+                    }
+                }
+
                 // Credit the wallet
-                const creditDesc = `Paystack Funding: ${dvaAccountNumber || reference}`;
-                await walletService.credit(wallet.user_id, parsedAmount, creditDesc);
+                const senderBank = data.authorization?.sender_bank || '';
+                const senderName = data.authorization?.sender_name || '';
+                const creditDesc = senderBank
+                    ? `Transfer from ${senderBank}${senderName ? ' - ' + senderName : ''} (Ref: ${reference})`
+                    : `Paystack Funding: ${dvaAccountNumber || reference}`;
+
+                const creditResult = await walletService.credit(wallet.user_id, parsedAmount, creditDesc);
+                const updatedBalance = Number(creditResult.newBalance);
+
+                console.log(`[PAYSTACK_WEBHOOK] Wallet ${wallet.id} credited successfully: +₦${parsedAmount}. New Balance: ₦${updatedBalance}`);
+
+                // Real-time WebSocket update to mobile client
+                try {
+                    const { SocketService } = require('../notifications/socket.service');
+                    SocketService.getInstance().emitToUser(wallet.user_id, 'wallet_credited', {
+                        amount: parsedAmount,
+                        newBalance: updatedBalance,
+                        description: creditDesc,
+                        reference,
+                    });
+                } catch (socketErr: any) {
+                    console.error('[PAYSTACK_WEBHOOK] Failed to emit socket event:', socketErr.message);
+                }
 
                 // Notification email
                 if (customerEmail) {
                     await emailService.sendEmail(customerEmail, 'Wallet Funded!', `
-                        <p>Your Sendo wallet has been credited with <b>₦${parsedAmount.toLocaleString()}</b>.</p>
-                        <p>New balance: <b>₦${(Number(wallet.balance) + parsedAmount).toLocaleString()}</b></p>
+                        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; color: #111;">
+                            <h2 style="font-size: 20px; font-weight: 700; margin-bottom: 16px; color: #111;">Wallet Credited Successfully</h2>
+                            <p style="font-size: 15px; margin: 0 0 12px 0;">Your Sendo wallet has been credited with <strong style="color: #059669;">₦${parsedAmount.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>.</p>
+                            <p style="font-size: 15px; margin: 0 0 12px 0;">Current Available Balance: <strong>₦${updatedBalance.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></p>
+                            <p style="font-size: 13px; color: #6b7280; margin-top: 24px; border-top: 1px solid #e5e7eb; padding-top: 12px;">Reference: ${reference}</p>
+                        </div>
                     `).catch((err: any) => console.error('[PAYSTACK_WEBHOOK] Failed to send email:', err));
                 }
 
                 // Notification push
-                const notificationsService = new (require('../notifications/notifications.service').NotificationsService)();
-                await notificationsService.sendPushNotification(
-                    wallet.user_id,
-                    'Wallet Funded!',
-                    `Your wallet has been credited with ₦${parsedAmount.toLocaleString()}. New balance: ₦${(Number(wallet.balance) + parsedAmount).toLocaleString()}`
-                ).catch((err: any) => console.error('[PAYSTACK_WEBHOOK] Failed to send push notification:', err));
+                try {
+                    const notificationsService = new (require('../notifications/notifications.service').NotificationsService)();
+                    await notificationsService.sendPushNotification(
+                        wallet.user_id,
+                        'Wallet Funded!',
+                        `Your wallet has been credited with ₦${parsedAmount.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. New balance: ₦${updatedBalance.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    );
+                } catch (pushErr: any) {
+                    console.error('[PAYSTACK_WEBHOOK] Push notification error:', pushErr.message);
+                }
             }
 
             return res.status(200).json({ status: 'SUCCESS' });
