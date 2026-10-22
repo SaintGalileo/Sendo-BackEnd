@@ -5,7 +5,11 @@ import Joi from 'joi';
 export const createOrderSchema = Joi.object({
     addressId: Joi.string().uuid().allow(null, '').optional(),
     fulfillmentType: Joi.string().valid('pickup', 'delivery').default('delivery'),
-    notes: Joi.string().allow('').optional(),
+    notes: Joi.string().allow('', null).optional(),
+    merchantNotes: Joi.string().allow('', null).optional(),
+    riderNotes: Joi.string().allow('', null).optional(),
+    merchant_notes: Joi.string().allow('', null).optional(),
+    rider_notes: Joi.string().allow('', null).optional(),
     paymentMethod: Joi.string().valid('wallet', 'cash', 'online', 'online_paid').default('wallet'),
     paymentReference: Joi.string().allow('', null).optional(),
 });

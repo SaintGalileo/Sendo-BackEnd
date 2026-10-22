@@ -267,7 +267,7 @@ export class MerchantController {
 
     async createProduct(req: AuthRequest, res: Response) {
         try {
-            const { name, price, category_id, image_url, description, is_available, stock_quantity, track_stock } = req.body;
+            const { name, price, category_id, image_url, description, is_available, stock_quantity, track_stock, sizes, colors } = req.body;
             if (!name || !price || !category_id) {
                 return sendResponse(res, 400, false, 'Name, price, and category_id are required');
             }
@@ -288,7 +288,9 @@ export class MerchantController {
                 image_url,
                 is_available: is_available !== undefined ? is_available : true,
                 stock_quantity: stock_quantity || 0,
-                track_stock: track_stock || false
+                track_stock: track_stock || false,
+                sizes: Array.isArray(sizes) ? sizes : [],
+                colors: Array.isArray(colors) ? colors : [],
             });
             return sendResponse(res, 201, true, 'Product created', product);
         } catch (error: any) {
@@ -315,6 +317,8 @@ export class MerchantController {
                 'is_available',
                 'stock_quantity',
                 'track_stock',
+                'sizes',
+                'colors',
             ] as const;
             const updates: Record<string, unknown> = {};
             for (const key of allowed) {

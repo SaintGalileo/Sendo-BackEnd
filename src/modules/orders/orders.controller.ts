@@ -9,7 +9,7 @@ const ordersService = new OrdersService();
 export class OrdersController {
     async createOrder(req: AuthRequest, res: Response) {
         try {
-            const { addressId, notes, paymentMethod, paymentReference, fulfillmentType } = req.body;
+            const { addressId, notes, merchantNotes, riderNotes, merchant_notes, rider_notes, paymentMethod, paymentReference, fulfillmentType } = req.body;
             const fulfillment = String(fulfillmentType || 'delivery').toLowerCase();
 
             if (fulfillment === 'delivery' && !addressId) {
@@ -19,6 +19,8 @@ export class OrdersController {
             const order = await ordersService.createOrder(req.user.id, {
                 addressId,
                 notes,
+                merchantNotes: merchantNotes || merchant_notes,
+                riderNotes: riderNotes || rider_notes,
                 paymentMethod,
                 paymentReference,
                 fulfillmentType: fulfillment,

@@ -206,29 +206,55 @@ export class OrdersService {
         }
 
         const notesBase = data.notes != null ? String(data.notes).trim() : '';
+        const riderNotesBase = data.riderNotes != null ? String(data.riderNotes).trim() : notesBase;
+        const merchantNotesBase = data.merchantNotes != null ? String(data.merchantNotes).trim() : '';
 
         // 2. Create the order
-        const { data: order, error: orderError } = await supabase
+        const orderPayload: any = {
+            consumer_id: userId,
+            merchant_id: merchantId,
+            address_id: addressId,
+            delivery_address: deliveryAddress,
+            delivery_lat: deliveryLat,
+            delivery_lng: deliveryLng,
+            subtotal,
+            delivery_fee: deliveryFee,
+            total_price: totalAmount,
+            status: OrderStatus.PENDING,
+            notes: riderNotesBase || notesBase || null,
+            merchant_notes: merchantNotesBase || null,
+            rider_notes: riderNotesBase || null,
+            payment_reference: isOnlinePaid && paymentReference ? paymentReference : null,
+            payment_method: effectiveMethod,
+            payment_status: (effectiveMethod === 'wallet' || isOnlinePaid) ? 'paid' : 'pending',
+            fulfillment_type: fulfillmentType,
+        };
+
+        let { data: order, error: orderError } = await supabase
             .from('orders')
-            .insert([{
-                consumer_id: userId,
-                merchant_id: merchantId,
-                address_id: addressId,
-                delivery_address: deliveryAddress,
-                delivery_lat: deliveryLat,
-                delivery_lng: deliveryLng,
-                subtotal,
-                delivery_fee: deliveryFee,
-                total_price: totalAmount,
-                status: OrderStatus.PENDING,
-                notes: notesBase || null,
-                payment_reference: isOnlinePaid && paymentReference ? paymentReference : null,
-                payment_method: effectiveMethod,
-                payment_status: (effectiveMethod === 'wallet' || isOnlinePaid) ? 'paid' : 'pending',
-                fulfillment_type: fulfillmentType,
-            }])
+            .insert([orderPayload])
             .select()
             .single();
+
+        // Graceful fallback if merchant_notes or rider_notes columns do not exist yet in Supabase
+        if (orderError && (orderError.message?.includes('merchant_notes') || orderError.message?.includes('rider_notes') || (orderError as any).code === 'PGRST204')) {
+            const combinedNotes = [
+                merchantNotesBase ? `[Store]: ${merchantNotesBase}` : '',
+                riderNotesBase ? `[Rider]: ${riderNotesBase}` : ''
+            ].filter(Boolean).join('\n') || null;
+
+            delete orderPayload.merchant_notes;
+            delete orderPayload.rider_notes;
+            orderPayload.notes = combinedNotes;
+
+            const fallbackRes = await supabase
+                .from('orders')
+                .insert([orderPayload])
+                .select()
+                .single();
+            order = fallbackRes.data;
+            orderError = fallbackRes.error;
+        }
 
         if (orderError) throw new Error(orderError.message);
 
@@ -542,7 +568,62 @@ export class OrdersService {
         return fullOrder;
     }
 
+    async autoCancelStaleOrders(userId?: string) {
+        try {
+            const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+            let query = supabase
+                .from('orders')
+                .select('id, status, payment_status, total_price, consumer_id, merchant_id, notes')
+                .eq('status', OrderStatus.PENDING)
+                .lt('created_at', threeMinutesAgo);
+
+            if (userId) {
+                query = query.eq('consumer_id', userId);
+            }
+
+            const { data: staleOrders, error } = await query;
+            if (error || !staleOrders || staleOrders.length === 0) return;
+
+            for (const order of staleOrders) {
+                const updatedNotes = order.notes
+                    ? `${order.notes}\nAuto-cancelled: Merchant did not accept in time`
+                    : 'Auto-cancelled: Merchant did not accept in time';
+
+                await supabase
+                    .from('orders')
+                    .update({
+                        status: OrderStatus.CANCELLED,
+                        notes: updatedNotes
+                    })
+                    .eq('id', order.id);
+
+                if (order.payment_status === 'paid') {
+                    await walletService.credit(order.consumer_id, order.total_price, `Refund for unaccepted order ${order.id}`);
+                    await supabase.from('orders').update({ payment_status: 'refunded' }).eq('id', order.id);
+                }
+
+                try {
+                    const fullOrder = await this.getHydratedOrderById(order.id);
+                    socketService.emitToUser(order.consumer_id, 'order_status_changed', fullOrder);
+                    socketService.emitToMerchant(order.merchant_id, 'order_cancelled', { orderId: order.id });
+                    await notificationsService.sendPushNotification(
+                        order.consumer_id,
+                        'Order Cancelled',
+                        `Your order #${order.id.toString().slice(0, 8)} was cancelled because the merchant didn't accept it in time. A refund has been issued to your wallet.`,
+                        { orderId: order.id, status: OrderStatus.CANCELLED, type: 'order_status_update' }
+                    );
+                } catch (notifyErr) {
+                    console.error('[OrdersService] Notification error for stale order:', notifyErr);
+                }
+            }
+        } catch (err) {
+            console.error('[OrdersService] Error auto-cancelling stale orders:', err);
+        }
+    }
+
     async getOrders(userId: string, pagination: any) {
+        await this.autoCancelStaleOrders(userId);
+
         const from = pagination.offset;
         const to = from + pagination.limit - 1;
 
@@ -558,6 +639,8 @@ export class OrdersService {
     }
 
     async getOrderById(userId: string, orderId: string) {
+        await this.autoCancelStaleOrders(userId);
+
         const { data, error } = await supabase
             .from('orders')
             .select('*, merchant:merchants(*), address:addresses(*), items:order_items(*, product:products(*)), courier:couriers(*, user:users(*))')
