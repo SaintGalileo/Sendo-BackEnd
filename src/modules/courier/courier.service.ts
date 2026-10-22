@@ -4,6 +4,7 @@ import { SocketService } from '../notifications/socket.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MerchantEarningsService } from '../merchant/earnings.service';
 import { UtilityService } from '../utility/utility.service';
+import { EmailService } from '../notifications/email.service';
 
 type DeliveryBucket = 'ongoing' | 'completed' | 'cancelled';
 type CourierDeliveryOrder = Record<string, any>;
@@ -18,6 +19,7 @@ export class CourierService {
     private readonly notificationsService = new NotificationsService();
     private readonly merchantEarningsService = new MerchantEarningsService();
     private readonly utilityService = new UtilityService();
+    private readonly emailService = new EmailService();
     private readonly courierOrderSelect =
         '*, merchant:merchants(*), address:addresses(*), consumer:users!consumer_id(id, first_name, last_name, phone, email), items:order_items(*, product:products(*)), courier:couriers(*, user:users(*))';
     
@@ -368,6 +370,11 @@ export class CourierService {
                     { type: 'EARNING_CREDITED', orderId: data.id }
                 );
             }
+
+            // Send completion thank-you emails to customer and merchant
+            this.emailService.sendOrderDeliveredEmails(orderId, data, merchantShare).catch(err => {
+                console.error('[CourierService] Failed to send delivered emails:', err.message);
+            });
         }
 
         return data;

@@ -10,6 +10,7 @@ import { UtilityService } from '../utility/utility.service';
 import { SurgeService } from '../utility/surge.service';
 import { computeProductSurgePrice } from '../utility/product-surge.util';
 import { PaystackService } from '../payments/paystack.service';
+import { EmailService } from '../notifications/email.service';
 
 const cartService = new CartService();
 const walletService = new WalletService();
@@ -20,6 +21,7 @@ const earningsService = new MerchantEarningsService();
 const utilityService = new UtilityService();
 const surgeService = new SurgeService();
 const paystackService = new PaystackService();
+const emailService = new EmailService();
 
 export class OrdersService {
     private merchantNotificationOrderSelect =
@@ -653,6 +655,11 @@ export class OrdersService {
                         { type: 'EARNING_CREDITED', orderId: data.id }
                     );
                 }
+
+                // Send completion thank-you emails to customer and merchant
+                emailService.sendOrderDeliveredEmails(orderId, fullOrder || data, merchantShare).catch((err: any) => {
+                    console.error('[OrdersService] Failed to send delivered emails:', err.message);
+                });
             } catch (earnError: any) {
                 console.error('[OrdersService] Failed to distribute merchant earnings:', earnError.message);
             }
