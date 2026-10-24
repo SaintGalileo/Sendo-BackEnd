@@ -6,23 +6,25 @@ import { roleMiddleware } from '../../common/middleware/role.middleware';
 const router = Router();
 const paymentsController = new PaymentsController();
 
-// Auth and Role Middleware
+// Auth Middleware
 router.use(authMiddleware);
-router.use(roleMiddleware(['consumer'])); // Consumers initiate payments
 
-router.post('/intent', paymentsController.createIntent);
-router.post('/checkout-link', (req, res) => paymentsController.createCheckoutLink(req as any, res));
-router.post('/verify-paystack', (req, res) => paymentsController.verifyPaystackPayment(req as any, res));
-router.post('/confirm', paymentsController.confirmPayment);
-router.get('/history', paymentsController.getHistory);
+// Consumer-only payment routes
+const consumerOnly = roleMiddleware(['consumer']);
+router.post('/intent', consumerOnly, paymentsController.createIntent);
+router.post('/checkout-link', consumerOnly, (req, res) => paymentsController.createCheckoutLink(req as any, res));
+router.post('/verify-paystack', consumerOnly, (req, res) => paymentsController.verifyPaystackPayment(req as any, res));
+router.post('/confirm', consumerOnly, paymentsController.confirmPayment);
+router.get('/history', consumerOnly, paymentsController.getHistory);
 
-router.post('/tip', paymentsController.addTip);
-router.post('/refund', paymentsController.refundPayment);
+router.post('/tip', consumerOnly, paymentsController.addTip);
+router.post('/refund', consumerOnly, paymentsController.refundPayment);
 
-// Wallet
-router.get('/wallet', paymentsController.getWallet);
-router.post('/wallet/refresh-account', paymentsController.refreshWalletAccount);
-router.get('/wallet/balance', paymentsController.getWalletBalance);
-router.get('/wallet/transactions', paymentsController.getWalletTransactions);
+// Wallet endpoints (accessible by consumers, merchants, and couriers)
+const walletRoles = roleMiddleware(['consumer', 'merchant', 'courier', 'admin']);
+router.get('/wallet', walletRoles, paymentsController.getWallet);
+router.post('/wallet/refresh-account', walletRoles, paymentsController.refreshWalletAccount);
+router.get('/wallet/balance', walletRoles, paymentsController.getWalletBalance);
+router.get('/wallet/transactions', walletRoles, paymentsController.getWalletTransactions);
 
 export default router;
