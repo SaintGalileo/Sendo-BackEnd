@@ -29,13 +29,15 @@ export class PaymentsController {
     /** Initialize Paystack checkout (no order created yet). Same response shape as before. */
     async createCheckoutLink(req: AuthRequest, res: Response) {
         try {
-            const { amount } = req.body;
+            const { amount, purpose } = req.body;
             const parsedAmount = Number(amount);
             if (!parsedAmount || parsedAmount <= 0) {
                 return sendResponse(res, 400, false, 'A valid amount is required');
             }
 
-            const sessionRef = `SENDO_${req.user.id.slice(0, 8)}_${Date.now()}`;
+            const isFunding = purpose === 'wallet_funding';
+            const prefix = isFunding ? 'WALLET' : 'SENDO';
+            const sessionRef = `${prefix}_${req.user.id.slice(0, 8)}_${Date.now()}`;
 
             const { data: user } = await supabase
                 .from('users')
@@ -52,7 +54,10 @@ export class PaymentsController {
                 reference: sessionRef,
                 callbackUrl: PAYSTACK_CALLBACK_URL,
                 fullName,
-                metadata: { user_id: req.user.id, purpose: 'order_checkout' },
+                metadata: {
+                    user_id: req.user.id,
+                    purpose: isFunding ? 'wallet_funding' : 'order_checkout',
+                },
             });
 
             return sendResponse(res, 201, true, 'Checkout link created', {
@@ -74,7 +79,7 @@ export class PaymentsController {
     /** Verify Paystack payment after WebView callback. */
     async verifyPaystackPayment(req: AuthRequest, res: Response) {
         try {
-            const { reference, amount } = req.body || {};
+            const { reference, amount, isWalletFunding } = req.body || {};
             if (!reference) {
                 return sendResponse(res, 400, false, 'Payment reference is required');
             }
@@ -93,7 +98,7 @@ export class PaymentsController {
                 const expected = Number(amount);
                 // Allow 1 Naira tolerance for rounding
                 if (verified.amountNaira + 1 < expected) {
-                    return sendResponse(res, 402, false, 'Paid amount is less than order total', {
+                    return sendResponse(res, 402, false, 'Paid amount is less than expected', {
                         paid: false,
                         reference: verified.reference,
                         amountPaid: verified.amountNaira,
@@ -102,11 +107,68 @@ export class PaymentsController {
                 }
             }
 
+            // Check if this payment is for wallet funding
+            const isFunding = Boolean(
+                isWalletFunding ||
+                String(reference).startsWith('WALLET_') ||
+                verified.raw?.metadata?.purpose === 'wallet_funding'
+            );
+
+            if (isFunding) {
+                const { data: wallet } = await supabase
+                    .from('wallets')
+                    .select('id, user_id, balance')
+                    .eq('user_id', req.user.id)
+                    .maybeSingle();
+
+                if (wallet) {
+                    // Check idempotency: avoid double-crediting if webhook already handled it
+                    const { data: existingTxn } = await supabase
+                        .from('wallet_transactions')
+                        .select('id')
+                        .eq('wallet_id', wallet.id)
+                        .ilike('description', `%${verified.reference}%`)
+                        .maybeSingle();
+
+                    if (!existingTxn) {
+                        const creditDesc = `Paystack Online Funding (Ref: ${verified.reference})`;
+                        const creditResult = await walletService.credit(wallet.user_id, verified.amountNaira, creditDesc);
+                        const updatedBalance = Number(creditResult.newBalance);
+
+                        // Real-time WebSocket update to mobile client
+                        try {
+                            const { SocketService } = require('../notifications/socket.service');
+                            SocketService.getInstance().emitToUser(wallet.user_id, 'wallet_credited', {
+                                amount: verified.amountNaira,
+                                newBalance: updatedBalance,
+                                description: creditDesc,
+                                reference: verified.reference,
+                            });
+                        } catch (socketErr: any) {
+                            console.error('[PAYSTACK_VERIFY] Failed to emit socket event:', socketErr.message);
+                        }
+
+                        // Notification push
+                        try {
+                            const notificationsService = new (require('../notifications/notifications.service').NotificationsService)();
+                            await notificationsService.sendPushNotification(
+                                wallet.user_id,
+                                'Wallet Funded!',
+                                `Your wallet has been credited with ₦${verified.amountNaira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. New balance: ₦${updatedBalance.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            );
+                        } catch (pushErr: any) {
+                            console.error('[PAYSTACK_VERIFY] Push notification error:', pushErr.message);
+                        }
+                    }
+                }
+            }
+
             return sendResponse(res, 200, true, 'Payment verified', {
                 paid: true,
                 reference: verified.reference,
                 amount: verified.amountNaira,
                 status: verified.status,
+                walletCredited: isFunding,
             });
         } catch (error: any) {
             console.error('[PAYSTACK] verify error:', error.response?.data || error.message);

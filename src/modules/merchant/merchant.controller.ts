@@ -9,10 +9,16 @@ import { sendResponse } from '../../common/utils/response';
 import { getPaginationOptions, formatPaginatedResponse } from '../../common/utils/pagination';
 import { COMMERCIAL_MERCHANT_TYPES, type MerchantType } from '../admin/moduleMerchantTypes';
 
+import { supabase } from '../../config/supabase';
+import { SocketService } from '../notifications/socket.service';
+import { NotificationsService } from '../notifications/notifications.service';
+
 const merchantService = new MerchantOnboardingService();
 const ordersService = new OrdersService();
 const earningsService = new MerchantEarningsService();
 const seerbitService = new SeerBitService();
+const socketService = SocketService.getInstance();
+const notificationsService = new NotificationsService();
 const allowedBusinessTypes = COMMERCIAL_MERCHANT_TYPES;
 
 function getMerchantIdFromReq(req: Request): string | undefined {
@@ -523,12 +529,13 @@ export class MerchantController {
                 return sendResponse(res, 400, false, 'Merchants can only set accepted, preparing, ready_for_pickup, or delivered (pickup only)');
             }
 
-            await ordersService.updateOrderStatus(result.data.id, req.params.id as string, status);
+            const verificationCode = req.body.code || req.body.pickup_code || req.body.verification_code;
+            await ordersService.updateOrderStatus(result.data.id, req.params.id as string, status, verificationCode);
             const detailedOrder = await merchantService.getOrderById(result.data.id, req.params.id as string);
 
             return sendResponse(res, 200, true, `Order status updated to ${status}`, detailedOrder);
         } catch (error: any) {
-            return sendResponse(res, 500, false, error.message);
+            return sendResponse(res, 400, false, error.message);
         }
     }
 
@@ -597,7 +604,63 @@ export class MerchantController {
     }
 
     async pickUpOrder(req: AuthRequest, res: Response) {
-        return sendResponse(res, 403, false, 'Pickup is handled by the assigned courier');
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const result = await merchantService.getMerchantByUserId(
+                req.user.id,
+                getMerchantIdFromReq(req),
+            );
+            if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
+
+            const orderId = req.params.id as string;
+            const existing = await merchantService.getOrderById(result.data.id, orderId);
+            if (!existing) return sendResponse(res, 404, false, 'Order not found');
+
+            if (String(existing?.fulfillment_type || 'delivery') === 'pickup') {
+                return sendResponse(res, 400, false, 'This is a pickup order, not a courier delivery');
+            }
+
+            const code = req.body.code || req.body.driver_pickup_code || req.body.claim_code;
+            if (existing.driver_pickup_code) {
+                const expectedCode = String(existing.driver_pickup_code).trim();
+                const providedCode = code != null ? String(code).trim() : '';
+                if (!providedCode || providedCode !== expectedCode) {
+                    return sendResponse(res, 400, false, 'Invalid rider claim code. Please check the 4-digit code provided by the rider.');
+                }
+            }
+
+            // Update status to PICKED_UP
+            const { error: updateError } = await supabase
+                .from('orders')
+                .update({ status: OrderStatus.PICKED_UP })
+                .eq('id', orderId)
+                .eq('merchant_id', result.data.id);
+
+            if (updateError) throw new Error(updateError.message);
+
+            const detailedOrder = await merchantService.getOrderById(result.data.id, orderId);
+
+            // Notify User and Courier via Socket & Push
+            socketService.emitToUser(detailedOrder.consumer_id, 'order_status_changed', detailedOrder);
+            if (detailedOrder.courier_id) {
+                socketService.emitToCourier(detailedOrder.courier_id, 'order_status_changed', detailedOrder);
+            }
+
+            try {
+                await notificationsService.sendPushNotification(
+                    detailedOrder.consumer_id,
+                    'Order Picked Up!',
+                    'The courier has picked up your order and is on the way.',
+                    { orderId, status: OrderStatus.PICKED_UP, type: 'order_status_update' }
+                );
+            } catch (pushErr: any) {
+                console.error('[MerchantController] Push notification failed:', pushErr.message);
+            }
+
+            return sendResponse(res, 200, true, 'Rider claim verified. Order is now picked up.', detailedOrder);
+        } catch (error: any) {
+            return sendResponse(res, 400, false, error.message);
+        }
     }
 
     async onTheWayOrder(req: AuthRequest, res: Response) {
@@ -618,14 +681,16 @@ export class MerchantController {
                 return sendResponse(res, 403, false, 'Delivery completion is handled by the assigned courier');
             }
 
+            const verificationCode = req.body.code || req.body.pickup_code || req.body.verification_code;
             const order = await ordersService.updateOrderStatus(
                 result.data.id,
                 req.params.id as string,
                 OrderStatus.DELIVERED,
+                verificationCode
             );
             return sendResponse(res, 200, true, 'Order marked as collected', order);
         } catch (error: any) {
-            return sendResponse(res, 500, false, error.message);
+            return sendResponse(res, 400, false, error.message);
         }
     }
 

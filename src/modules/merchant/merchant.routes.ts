@@ -53,6 +53,7 @@ router.post('/orders/:id/decline', merchantController.declineOrder);
 router.post('/orders/:id/prepare', merchantController.prepareOrder);
 router.post('/orders/:id/ready', merchantController.readyForPickupOrder);
 router.post('/orders/:id/pickup', merchantController.pickUpOrder);
+router.post('/orders/:id/verify-rider', merchantController.pickUpOrder);
 router.post('/orders/:id/on-the-way', merchantController.onTheWayOrder);
 router.post('/orders/:id/deliver', merchantController.deliverOrder);
 router.put('/orders/:id/status', merchantController.updateOrderStatus);

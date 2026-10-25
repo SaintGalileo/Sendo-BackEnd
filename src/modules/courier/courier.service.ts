@@ -202,7 +202,7 @@ export class CourierService {
 
         const { data: order, error: orderError } = await supabase
             .from('orders')
-            .select('status, courier_id')
+            .select('status, courier_id, driver_pickup_code')
             .eq('id', orderId)
             .single();
 
@@ -212,12 +212,28 @@ export class CourierService {
             throw new Error('Order is not ready for pickup yet');
         }
 
-        const { data: assignedOrder, error } = await supabase
+        const updatePayload: any = { courier_id: profile.id };
+        if (!(order as any).driver_pickup_code) {
+            updatePayload.driver_pickup_code = Math.floor(1000 + Math.random() * 9000).toString();
+        }
+
+        let { data: assignedOrder, error } = await supabase
             .from('orders')
-            .update({ courier_id: profile.id }) // Just assign courier, status stays the same (e.g., PREPARING)
+            .update(updatePayload) // Just assign courier and claim code, status stays the same (e.g., PREPARING)
             .eq('id', orderId)
             .select()
             .single();
+
+        if (error && error.message?.includes('driver_pickup_code')) {
+            const fallback = await supabase
+                .from('orders')
+                .update({ courier_id: profile.id })
+                .eq('id', orderId)
+                .select()
+                .single();
+            assignedOrder = fallback.data;
+            error = fallback.error;
+        }
 
         if (error) throw new Error(error.message);
         const data = await this.getOrderByIdForCourier(userId, orderId);
@@ -260,16 +276,34 @@ export class CourierService {
     }
 
     // --- Delivery Process ---
-    async updateOrderDeliveryStatus(userId: string, orderId: string, status: string) {
+    async updateOrderDeliveryStatus(userId: string, orderId: string, status: string, verificationCode?: string) {
         const profile = await this.getProfile(userId);
         const { data: existingOrder, error: existingOrderError } = await supabase
             .from('orders')
-            .select('status')
+            .select('status, delivery_code, driver_pickup_code')
             .eq('id', orderId)
             .eq('courier_id', profile.id)
             .single();
 
         if (existingOrderError) throw new Error(existingOrderError.message);
+
+        // Verify customer delivery code before completing delivery
+        if (status === OrderStatus.DELIVERED && (existingOrder as any).delivery_code) {
+            const expectedCode = String((existingOrder as any).delivery_code).trim();
+            const providedCode = verificationCode != null ? String(verificationCode).trim() : '';
+            if (!providedCode || providedCode !== expectedCode) {
+                throw new Error('Invalid delivery verification code. Please ask the customer for their 4-digit code.');
+            }
+        }
+
+        // Verify driver pickup code if courier submits code at pickup
+        if (status === OrderStatus.PICKED_UP && verificationCode && (existingOrder as any).driver_pickup_code) {
+            const expectedCode = String((existingOrder as any).driver_pickup_code).trim();
+            const providedCode = String(verificationCode).trim();
+            if (providedCode !== expectedCode) {
+                throw new Error('Invalid rider claim code.');
+            }
+        }
 
         const { error } = await supabase
             .from('orders')

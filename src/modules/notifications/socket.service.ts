@@ -60,4 +60,8 @@ export class SocketService {
         // Online and looking for work
         this.emit('available_drivers', event, data);
     }
+
+    public emitToCourier(courierId: string, event: string, data: any) {
+        this.emit(`courier:${courierId}`, event, data);
+    }
 }

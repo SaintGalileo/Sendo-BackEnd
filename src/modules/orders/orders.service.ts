@@ -215,6 +215,10 @@ export class OrdersService {
         const riderNotesBase = data.riderNotes != null ? String(data.riderNotes).trim() : notesBase;
         const merchantNotesBase = data.merchantNotes != null ? String(data.merchantNotes).trim() : '';
 
+        const pickupCode = fulfillmentType === 'pickup' ? Math.floor(1000 + Math.random() * 9000).toString() : null;
+        const deliveryCode = fulfillmentType === 'delivery' ? Math.floor(1000 + Math.random() * 9000).toString() : null;
+        const driverPickupCode = fulfillmentType === 'delivery' ? Math.floor(1000 + Math.random() * 9000).toString() : null;
+
         // 2. Create the order
         const orderPayload: any = {
             consumer_id: userId,
@@ -231,6 +235,9 @@ export class OrdersService {
             notes: riderNotesBase || notesBase || null,
             merchant_notes: merchantNotesBase || null,
             rider_notes: riderNotesBase || null,
+            pickup_code: pickupCode,
+            delivery_code: deliveryCode,
+            driver_pickup_code: driverPickupCode,
             payment_reference: isOnlinePaid && paymentReference ? paymentReference : null,
             payment_method: effectiveMethod,
             payment_status: (effectiveMethod === 'wallet' || isOnlinePaid) ? 'paid' : 'pending',
@@ -243,11 +250,14 @@ export class OrdersService {
             .select()
             .single();
 
-        // Graceful fallback if merchant_notes, rider_notes, or merchant_subtotal columns do not exist yet in Supabase
+        // Graceful fallback if columns do not exist yet in Supabase
         if (orderError && (
             orderError.message?.includes('merchant_notes') || 
             orderError.message?.includes('rider_notes') || 
             orderError.message?.includes('merchant_subtotal') || 
+            orderError.message?.includes('pickup_code') || 
+            orderError.message?.includes('delivery_code') || 
+            orderError.message?.includes('driver_pickup_code') || 
             (orderError as any).code === 'PGRST204'
         )) {
             const combinedNotes = [
@@ -258,6 +268,9 @@ export class OrdersService {
             delete orderPayload.merchant_notes;
             delete orderPayload.rider_notes;
             delete orderPayload.merchant_subtotal;
+            delete orderPayload.pickup_code;
+            delete orderPayload.delivery_code;
+            delete orderPayload.driver_pickup_code;
             orderPayload.notes = combinedNotes;
 
             const fallbackRes = await supabase
@@ -512,10 +525,10 @@ export class OrdersService {
         return fullOrder;
     }
 
-    async updateOrderStatus(merchantId: string, orderId: string, status: OrderStatus) {
+    async updateOrderStatus(merchantId: string, orderId: string, status: OrderStatus, verificationCode?: string) {
         const { data: existingOrder, error: existingOrderError } = await supabase
             .from('orders')
-            .select('status, fulfillment_type, courier_id')
+            .select('status, fulfillment_type, courier_id, pickup_code')
             .eq('id', orderId)
             .eq('merchant_id', merchantId)
             .single();
@@ -533,6 +546,15 @@ export class OrdersService {
                     ? 'Merchants can only move pickup orders to accepted, preparing, ready_for_pickup, or delivered'
                     : 'Merchants can only move orders to accepted, preparing, or ready_for_pickup',
             );
+        }
+
+        // Verify pickup code if completing a pickup order
+        if (status === OrderStatus.DELIVERED && isPickup && (existingOrder as any).pickup_code) {
+            const expectedCode = String((existingOrder as any).pickup_code).trim();
+            const providedCode = verificationCode != null ? String(verificationCode).trim() : '';
+            if (!providedCode || providedCode !== expectedCode) {
+                throw new Error('Invalid pickup verification code. Please ask the customer for their 4-digit code.');
+            }
         }
 
         const { data, error } = await supabase

@@ -139,7 +139,8 @@ export class CourierController {
     // Delivery Process
     async pickedUpOrder(req: AuthRequest, res: Response) {
         try {
-            const order = await courierService.updateOrderDeliveryStatus(req.user.id, req.params.orderId as string, OrderStatus.PICKED_UP);
+            const code = req.body?.code || req.body?.driver_pickup_code || req.body?.claim_code;
+            const order = await courierService.updateOrderDeliveryStatus(req.user.id, req.params.orderId as string, OrderStatus.PICKED_UP, code);
             return sendResponse(res, 200, true, 'Order picked up', order);
         } catch (error: any) {
             return sendResponse(res, 400, false, error.message);
@@ -148,8 +149,8 @@ export class CourierController {
 
     async deliveredOrder(req: AuthRequest, res: Response) {
         try {
-            const order = await courierService.updateOrderDeliveryStatus(req.user.id, req.params.orderId as string, OrderStatus.DELIVERED);
-            // Additionally can take proof of delivery in body here
+            const code = req.body?.code || req.body?.delivery_code || req.body?.verification_code;
+            const order = await courierService.updateOrderDeliveryStatus(req.user.id, req.params.orderId as string, OrderStatus.DELIVERED, code);
             return sendResponse(res, 200, true, 'Order delivered', order);
         } catch (error: any) {
             return sendResponse(res, 400, false, error.message);
