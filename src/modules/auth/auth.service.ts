@@ -381,17 +381,37 @@ export class AuthService {
         deliveryRadius: number = 0,
         preparationTime: string = '15-25',
         deliveryFee: number = 0,
-        email?: string
+        email?: string,
+        categories?: string[]
     ): Promise<{ success: boolean; message: string; data?: any; token?: string }> {
         const decoded = this.verifyRegistrationToken(registrationToken);
         if (!decoded) return { success: false, message: 'Invalid registration token. Please verify your phone number again.' };
 
-        if (!this.allowedMerchantTypes.includes(merchantType as MerchantType)) {
+        // Build the resolved categories array from either the new `categories` field or the legacy `merchantType`.
+        let resolvedCategories: string[] = [];
+        if (categories && Array.isArray(categories) && categories.length > 0) {
+            resolvedCategories = [...new Set(categories.map(c => String(c).trim().toLowerCase()))];
+        } else if (merchantType) {
+            resolvedCategories = [String(merchantType).trim().toLowerCase()];
+        }
+
+        if (resolvedCategories.length === 0) {
+            return { success: false, message: 'At least one category (merchantType or categories) is required.' };
+        }
+        if (resolvedCategories.length > 10) {
+            return { success: false, message: 'A store can have at most 10 categories.' };
+        }
+
+        const invalid = resolvedCategories.filter(c => !this.allowedMerchantTypes.includes(c as MerchantType));
+        if (invalid.length > 0) {
             return {
                 success: false,
-                message: `merchantType must be one of: ${COMMERCIAL_MERCHANT_TYPES.join(', ')}`,
+                message: `Invalid categories: ${invalid.join(', ')}. Must be one of: ${COMMERCIAL_MERCHANT_TYPES.join(', ')}`,
             };
         }
+
+        // Use the first category as the legacy `type` column value.
+        const primaryType = resolvedCategories[0] as MerchantType;
 
         // 1. Get or Create User
         const { data: existingUser } = await supabase
@@ -434,7 +454,8 @@ export class AuthService {
                     first_name: firstName,
                     last_name: lastName,
                     name: storeName,
-                    type: merchantType as MerchantType,
+                    type: primaryType,
+                    categories: resolvedCategories,
                     status: 'unverified',
                     description,
                     phone: contactPhone || decoded.phone,

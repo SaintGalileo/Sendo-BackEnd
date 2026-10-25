@@ -92,11 +92,12 @@ export class AuthController {
             deliveryRadius,
             preparationTime,
             deliveryFee,
-            email // This is for the user account email
+            email, // This is for the user account email
+            categories // New: array of category strings
         } = req.body || {};
 
-        if (!registrationToken || !firstName || !lastName || !storeName || !merchantType) {
-            return res.status(400).json({ success: false, message: 'registrationToken, firstName, lastName, storeName, and merchantType are required' });
+        if (!registrationToken || !firstName || !lastName || !storeName || (!merchantType && (!categories || !Array.isArray(categories) || categories.length === 0))) {
+            return res.status(400).json({ success: false, message: 'registrationToken, firstName, lastName, storeName, and merchantType (or categories array) are required' });
         }
 
         if (!openingTime || !closingTime) {
@@ -129,7 +130,8 @@ export class AuthController {
             deliveryRadius,
             preparationTime,
             deliveryFee,
-            email
+            email,
+            categories
         );
         return res.status(result.success ? 201 : 400).json(result);
     }

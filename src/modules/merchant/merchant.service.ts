@@ -45,8 +45,12 @@ export class MerchantOnboardingService {
         isPickupOnly: boolean = false,
         deliveryRadius: number = 0,
         preparationTime: string = '15-25',
-        deliveryFee: number = 0
+        deliveryFee: number = 0,
+        categories?: string[]
     ) {
+        // Resolve categories: use explicit array or fall back to [type]
+        const resolvedCategories = (categories && categories.length > 0) ? categories : [type];
+
         const { data, error } = await supabase
             .from('merchants')
             .insert([
@@ -56,6 +60,7 @@ export class MerchantOnboardingService {
                     last_name: lastName,
                     name: shopName,
                     type,
+                    categories: resolvedCategories,
                     status: 'unverified',
                     description,
                     phone: contactPhone,
@@ -137,6 +142,21 @@ export class MerchantOnboardingService {
 
     async updateStore(merchantId: string, updateData: any) {
         const patch: Record<string, any> = { ...updateData };
+
+        // Handle categories array updates — sync the legacy `type` column.
+        if (patch.categories !== undefined) {
+            if (Array.isArray(patch.categories)) {
+                if (patch.categories.length > 10) {
+                    throw new Error('A store can have at most 10 categories.');
+                }
+                // Deduplicate and lowercase
+                patch.categories = [...new Set(patch.categories.map((c: string) => String(c).trim().toLowerCase()))];
+                // Keep legacy type column in sync with the first category.
+                if (patch.categories.length > 0) {
+                    patch.type = patch.categories[0];
+                }
+            }
+        }
 
         if (patch.fulfillment_modes !== undefined) {
             const mode = String(patch.fulfillment_modes).toLowerCase();

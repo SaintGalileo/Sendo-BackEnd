@@ -14,15 +14,106 @@ function uncategorizedCategoryId(merchantId: string): string {
 }
 
 const TYPE_ALIAS_MAP: Record<string, string[]> = {
-    restaurant: ['restaurant', 'food_restaurant', 'bakery_confectionery'],
-    food: ['restaurant', 'food_restaurant', 'bakery_confectionery'],
-    food_restaurant: ['restaurant', 'food_restaurant', 'bakery_confectionery'],
-    grocery: ['grocery', 'supermarket_groceries', 'agriculture_farm_supplies', 'local_specialty_products'],
-    groceries: ['grocery', 'supermarket_groceries', 'agriculture_farm_supplies', 'local_specialty_products'],
-    supermarket_groceries: ['grocery', 'supermarket_groceries', 'agriculture_farm_supplies', 'local_specialty_products'],
-    pharmacy: ['pharmacy', 'pharmacy_healthcare', 'beauty_personal_care'],
-    pharmacy_healthcare: ['pharmacy', 'pharmacy_healthcare', 'beauty_personal_care'],
-    store: ['store', 'other', 'general', ...COMMERCIAL_MERCHANT_TYPES],
+    // Food & Dining
+    restaurant: ['restaurant', 'food_restaurant'],
+    food: ['restaurant', 'food_restaurant'],
+    food_restaurant: ['restaurant', 'food_restaurant'],
+
+    // Bakery
+    bakery: ['bakery_confectionery'],
+    bakery_confectionery: ['bakery_confectionery'],
+
+    // Supermarket & Groceries
+    grocery: ['grocery', 'supermarket_groceries'],
+    groceries: ['grocery', 'supermarket_groceries'],
+    supermarket: ['grocery', 'supermarket_groceries'],
+    supermarket_groceries: ['grocery', 'supermarket_groceries'],
+    'fruits-vegetables': ['supermarket_groceries', 'agriculture_farm_supplies'],
+    'meat-seafood': ['supermarket_groceries'],
+    'household-cleaning': ['supermarket_groceries', 'home_living'],
+
+    // Pharmacy & Health
+    pharmacy: ['pharmacy', 'pharmacy_healthcare'],
+    pharmacy_healthcare: ['pharmacy', 'pharmacy_healthcare'],
+
+    // Drinks & Alcohol
+    wine: ['alcohol_beverages'],
+    drinks: ['alcohol_beverages'],
+    alcohol: ['alcohol_beverages'],
+    alcohol_beverages: ['alcohol_beverages'],
+
+    // Fashion & Accessories
+    fashion: ['fashion_clothing', 'shoes_bags', 'jewellery_accessories'],
+    fashion_clothing: ['fashion_clothing'],
+    'shoes-footwear': ['shoes_bags'],
+    shoes_bags: ['shoes_bags'],
+    'jewelry-accessories': ['jewellery_accessories'],
+    jewellery_accessories: ['jewellery_accessories'],
+
+    // Tech & Electronics
+    electronics: ['electronics_gadgets', 'phones_computers'],
+    electronics_gadgets: ['electronics_gadgets'],
+    'phones-tablets': ['phones_computers'],
+    'phones-accessories': ['phones_computers', 'electronics_gadgets'],
+    'computer-accessories': ['phones_computers', 'electronics_gadgets'],
+    gaming: ['electronics_gadgets'],
+    phones_computers: ['phones_computers'],
+
+    // Home & Living
+    'home-kitchen': ['home_living'],
+    'home-living': ['home_living'],
+    furniture: ['home_living'],
+    home_living: ['home_living'],
+
+    // Beauty & Care
+    beauty: ['beauty_personal_care'],
+    'beauty-cosmetics': ['beauty_personal_care'],
+    'skincare-beauty': ['beauty_personal_care'],
+    'makeup-cosmetics': ['beauty_personal_care'],
+    beauty_personal_care: ['beauty_personal_care'],
+
+    // Baby & Kids
+    'baby-kids': ['baby_kids'],
+    baby_kids: ['baby_kids'],
+
+    // Pet Supplies
+    'pet-supplies': ['pet_supplies'],
+    pet_supplies: ['pet_supplies'],
+
+    // Sports & Fitness
+    'sports-fitness': ['sports_fitness'],
+    sports_fitness: ['sports_fitness'],
+
+    // Books & Stationery
+    'books-stationery': ['books_stationery'],
+    books_stationery: ['books_stationery'],
+
+    // Automotive
+    automotive: ['automotive'],
+
+    // Hardware & Building
+    'hardware-tools': ['hardware_building'],
+    hardware_building: ['hardware_building'],
+
+    // Agro & Farm
+    'agro-market': ['agriculture_farm_supplies'],
+    agriculture_farm_supplies: ['agriculture_farm_supplies'],
+
+    // Gifts & Flowers
+    'gifts-flowers': ['gifts_speciality'],
+    'flowers-gifts': ['gifts_speciality'],
+    gifts_speciality: ['gifts_speciality'],
+
+    // Business & Specialty
+    office_business_supplies: ['office_business_supplies'],
+    local_specialty_products: ['local_specialty_products'],
+    services: ['services'],
+    wholesale_bulk: ['wholesale_bulk'],
+
+    // General Retail Store
+    store: ['store', 'other', 'general'],
+    stores: ['store', 'other', 'general'],
+    other: ['other'],
 };
 
 /** Cap for in-memory geo filter pool (MVP scale). */
@@ -36,10 +127,12 @@ const featuredPoolCache = new Map<string, { at: number; promise: Promise<any[]> 
 function applyTypeFilter(query: any, type?: string) {
     if (!type || type === 'all') return query;
     const clean = type.toLowerCase().trim();
-    if (TYPE_ALIAS_MAP[clean]) {
-        return query.in('type', TYPE_ALIAS_MAP[clean]);
-    }
-    return query.eq('type', type);
+    const types = TYPE_ALIAS_MAP[clean] || [type];
+    // Filter using both the new categories array column (overlap) and legacy type column.
+    // `categories.ov.{...}` checks if the merchant's categories array overlaps with the requested types.
+    const catFilter = `categories.ov.{${types.join(',')}}`;
+    const typeFilter = types.map(t => `type.eq.${t}`).join(',');
+    return query.or(`${catFilter},${typeFilter}`);
 }
 
 function annotateAvailability(stores: any[]) {

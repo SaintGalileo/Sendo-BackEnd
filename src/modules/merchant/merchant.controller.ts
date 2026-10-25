@@ -55,7 +55,8 @@ export class MerchantController {
                 isPickupOnly,
                 deliveryRadius,
                 preparationTime,
-                deliveryFee
+                deliveryFee,
+                categories
             } = req.body;
 
             if (
@@ -72,12 +73,25 @@ export class MerchantController {
                 );
             }
 
-            if (!allowedBusinessTypes.includes(businessType)) {
+            // Validate categories or businessType
+            const resolvedCategories = (categories && Array.isArray(categories) && categories.length > 0)
+                ? categories
+                : (businessType ? [businessType] : []);
+
+            if (resolvedCategories.length === 0) {
+                return sendResponse(res, 400, false, 'At least one category (businessType or categories) is required');
+            }
+            if (resolvedCategories.length > 10) {
+                return sendResponse(res, 400, false, 'A store can have at most 10 categories.');
+            }
+
+            const invalidCats = resolvedCategories.filter((c: string) => !allowedBusinessTypes.includes(c as any));
+            if (invalidCats.length > 0) {
                 return sendResponse(
                     res,
                     400,
                     false,
-                    `Invalid businessType. Must be one of: ${allowedBusinessTypes.join(', ')}`,
+                    `Invalid categories: ${invalidCats.join(', ')}. Must be one of: ${allowedBusinessTypes.join(', ')}`,
                 );
             }
 
@@ -86,7 +100,7 @@ export class MerchantController {
                 firstName,
                 lastName,
                 shopName,
-                businessType as MerchantType,
+                (resolvedCategories[0] || businessType) as MerchantType,
                 description,
                 contactPhone,
                 contactEmail,
@@ -106,7 +120,8 @@ export class MerchantController {
                 isPickupOnly,
                 deliveryRadius,
                 preparationTime,
-                deliveryFee
+                deliveryFee,
+                resolvedCategories
             );
             if (!result.success) return sendResponse(res, 500, false, result.message || 'Failed to register store');
 
