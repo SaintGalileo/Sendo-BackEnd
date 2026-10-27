@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { randomUUID } from 'crypto';
 import { MerchantOnboardingService } from './merchant.service';
 import { OrdersService } from '../orders/orders.service';
 import { MerchantEarningsService } from './earnings.service';
@@ -629,14 +630,52 @@ export class MerchantController {
                 }
             }
 
-            // Update status to PICKED_UP
+            const evidenceUrl = req.body.evidence_url || req.body.image_url || req.body.evidence || req.body.photo_url;
+            const updatePayload: Record<string, any> = { status: OrderStatus.PICKED_UP };
+            if (evidenceUrl) {
+                updatePayload.merchant_handover_image = evidenceUrl;
+            }
+
+            // Update status to PICKED_UP (and optionally save merchant_handover_image)
             const { error: updateError } = await supabase
                 .from('orders')
-                .update({ status: OrderStatus.PICKED_UP })
+                .update(updatePayload)
                 .eq('id', orderId)
                 .eq('merchant_id', result.data.id);
 
-            if (updateError) throw new Error(updateError.message);
+            if (updateError) {
+                // If column merchant_handover_image is not yet migrated, fallback to updating status only
+                if (updateError.message?.includes('merchant_handover_image')) {
+                    const { error: retryError } = await supabase
+                        .from('orders')
+                        .update({ status: OrderStatus.PICKED_UP })
+                        .eq('id', orderId)
+                        .eq('merchant_id', result.data.id);
+                    if (retryError) throw new Error(retryError.message);
+                } else {
+                    throw new Error(updateError.message);
+                }
+            }
+
+            // Save to scalable order_evidence table
+            if (evidenceUrl) {
+                try {
+                    await supabase.from('order_evidence').insert({
+                        order_id: orderId,
+                        stage: 'merchant_handover_courier',
+                        actor_type: 'merchant',
+                        actor_id: result.data.id,
+                        image_url: evidenceUrl,
+                        notes: req.body.notes || 'Handed over to courier with claim verification',
+                        metadata: {
+                            courier_id: existing.courier_id,
+                            timestamp: new Date().toISOString(),
+                        },
+                    });
+                } catch (evidenceErr: any) {
+                    console.warn('[order_evidence insert warning]:', evidenceErr?.message);
+                }
+            }
 
             const detailedOrder = await merchantService.getOrderById(result.data.id, orderId);
 
@@ -676,21 +715,140 @@ export class MerchantController {
             );
             if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
 
-            const existing = await merchantService.getOrderById(result.data.id, req.params.id as string);
+            const orderId = req.params.id as string;
+            const existing = await merchantService.getOrderById(result.data.id, orderId);
             if (String(existing?.fulfillment_type || 'delivery') !== 'pickup') {
                 return sendResponse(res, 403, false, 'Delivery completion is handled by the assigned courier');
             }
 
             const verificationCode = req.body.code || req.body.pickup_code || req.body.verification_code;
+            const evidenceUrl = req.body.evidence_url || req.body.image_url || req.body.evidence || req.body.photo_url;
+
             const order = await ordersService.updateOrderStatus(
                 result.data.id,
-                req.params.id as string,
+                orderId,
                 OrderStatus.DELIVERED,
                 verificationCode
             );
+
+            // Record evidence if provided
+            if (evidenceUrl) {
+                try {
+                    await supabase
+                        .from('orders')
+                        .update({ merchant_handover_image: evidenceUrl })
+                        .eq('id', orderId)
+                        .eq('merchant_id', result.data.id);
+
+                    await supabase.from('order_evidence').insert({
+                        order_id: orderId,
+                        stage: 'merchant_handover_customer',
+                        actor_type: 'merchant',
+                        actor_id: result.data.id,
+                        image_url: evidenceUrl,
+                        notes: req.body.notes || 'Handed over directly to customer at store',
+                        metadata: {
+                            pickup_code_verified: true,
+                            timestamp: new Date().toISOString(),
+                        },
+                    });
+                } catch (evidenceErr: any) {
+                    console.warn('[order_evidence insert warning]:', evidenceErr?.message);
+                }
+            }
+
             return sendResponse(res, 200, true, 'Order marked as collected', order);
         } catch (error: any) {
             return sendResponse(res, 400, false, error.message);
+        }
+    }
+
+    async getOrderEvidence(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+            const result = await merchantService.getMerchantByUserId(
+                req.user.id,
+                getMerchantIdFromReq(req),
+            );
+            if (!result.success) return sendResponse(res, 404, false, 'Merchant not found');
+
+            const orderId = req.params.id as string;
+            const { data, error } = await supabase
+                .from('order_evidence')
+                .select('*')
+                .eq('order_id', orderId)
+                .order('created_at', { ascending: true });
+
+            if (error) {
+                return sendResponse(res, 200, true, 'Order evidence retrieved', []);
+            }
+            return sendResponse(res, 200, true, 'Order evidence retrieved', data || []);
+        } catch (error: any) {
+            return sendResponse(res, 400, false, error.message);
+        }
+    }
+
+    async uploadEvidence(req: AuthRequest, res: Response) {
+        try {
+            if (!req.user || !req.user.id) return sendResponse(res, 401, false, 'Unauthorized');
+
+            const { image, data_url, url } = req.body || {};
+            if (url && typeof url === 'string' && /^https?:\/\//i.test(url)) {
+                return sendResponse(res, 200, true, 'Image URL accepted', { url });
+            }
+
+            let buffer: Buffer | null = null;
+            let mime = 'image/jpeg';
+            let ext = 'jpg';
+
+            const rawData = data_url || image;
+            if (typeof rawData === 'string' && rawData.startsWith('data:')) {
+                const match = /^data:([^;]+);base64,(.+)$/.exec(rawData);
+                if (match) {
+                    mime = match[1];
+                    buffer = Buffer.from(match[2], 'base64');
+                }
+            } else if (typeof rawData === 'string' && rawData.length > 50) {
+                buffer = Buffer.from(rawData, 'base64');
+            }
+
+            if (!buffer) {
+                return sendResponse(res, 400, false, 'Provide a valid image base64, data_url, or url');
+            }
+
+            if (mime.includes('png')) ext = 'png';
+            else if (mime.includes('webp')) ext = 'webp';
+
+            const path = `evidence/${randomUUID()}.${ext}`;
+
+            // Try 'order-evidence' bucket first, fallback to 'admin-uploads'
+            let bucket = 'order-evidence';
+            let { error: uploadError } = await supabase.storage.from(bucket).upload(path, buffer, {
+                contentType: mime,
+                upsert: true,
+            });
+
+            if (uploadError) {
+                bucket = 'admin-uploads';
+                const retryRes = await supabase.storage.from(bucket).upload(path, buffer, {
+                    contentType: mime,
+                    upsert: true,
+                });
+                uploadError = retryRes.error;
+            }
+
+            if (uploadError) {
+                return sendResponse(res, 400, false, `Upload failed: ${uploadError.message}`);
+            }
+
+            const { data: publicData } = supabase.storage.from(bucket).getPublicUrl(path);
+            return sendResponse(res, 201, true, 'Image uploaded to Supabase Storage', {
+                url: publicData.publicUrl,
+                path,
+                bucket,
+            });
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message || 'Upload failed');
         }
     }
 

@@ -48,6 +48,7 @@ router.get('/orders/completed', merchantController.getCompletedOrders);
 router.get('/orders/cancelled', merchantController.getCancelledOrders);
 router.get('/orders', merchantController.getOrders);
 router.get('/orders/:id', merchantController.getOrderById);
+router.get('/orders/:id/evidence', merchantController.getOrderEvidence);
 router.post('/orders/:id/accept', merchantController.acceptOrder);
 router.post('/orders/:id/decline', merchantController.declineOrder);
 router.post('/orders/:id/prepare', merchantController.prepareOrder);
@@ -57,6 +58,8 @@ router.post('/orders/:id/verify-rider', merchantController.pickUpOrder);
 router.post('/orders/:id/on-the-way', merchantController.onTheWayOrder);
 router.post('/orders/:id/deliver', merchantController.deliverOrder);
 router.put('/orders/:id/status', merchantController.updateOrderStatus);
+router.post('/upload-evidence', merchantController.uploadEvidence);
+router.post('/orders/:id/evidence/upload', merchantController.uploadEvidence);
 
 // Earnings
 router.get('/earnings', merchantController.getEarnings);
