@@ -1,7 +1,7 @@
 import { supabase } from '../../config/supabase';
 import { messaging } from '../../config/firebase';
 
-// Real system would use FCM (Firebase Cloud Messaging) or similar
+// 
 export class NotificationsService {
     async getNotifications(userId: string, pagination: any) {
         const from = pagination.offset;
@@ -84,7 +84,7 @@ export class NotificationsService {
             // 3. Send via Firebase
             const response = await messaging.send(message);
             console.log(`[Push] Successfully sent message to user ${userId}:`, response);
-            
+
             // 4. Optionally log to notifications table (internal history)
             await supabase.from('notifications').insert([{
                 user_id: userId,
@@ -114,6 +114,83 @@ export class NotificationsService {
             throw new Error(error.message);
         }
         return data;
+    }
+
+    async registerCourierPushId(courierId: string, pushId: string) {
+        const { data, error } = await supabase
+            .from('couriers')
+            .update({ push_id: pushId })
+            .eq('id', courierId)
+            .select()
+            .single();
+
+        if (error) {
+            console.warn('[registerCourierPushId] Update error:', error.message);
+            throw new Error(error.message);
+        }
+        return data;
+    }
+
+    async sendPushNotificationToCourier(courierId: string, title: string, body: string, data?: any) {
+        try {
+            // 1. Fetch push_id and user_id from couriers table
+            const { data: courier, error: cErr } = await supabase
+                .from('couriers')
+                .select('push_id, user_id')
+                .eq('id', courierId)
+                .single();
+
+            if (cErr || !courier) {
+                console.warn(`[Push to Courier] Courier ${courierId} not found:`, cErr?.message);
+                return null;
+            }
+
+            let pushToken = courier.push_id;
+
+            // Fallback to courier user's fcm_token if courier.push_id is not set
+            if (!pushToken && courier.user_id) {
+                const { data: user } = await supabase
+                    .from('users')
+                    .select('fcm_token')
+                    .eq('id', courier.user_id)
+                    .single();
+                pushToken = user?.fcm_token;
+            }
+
+            if (!pushToken) {
+                console.warn(`[Push to Courier] No push_id or FCM token found for courier ${courierId}`);
+                return null;
+            }
+
+            // 2. Prepare stringified data for FCM
+            const fcmData: Record<string, string> = {
+                courierId: String(courierId),
+            };
+            if (data && typeof data === 'object') {
+                Object.keys(data).forEach(k => {
+                    if (data[k] !== undefined && data[k] !== null) {
+                        fcmData[k] = String(data[k]);
+                    }
+                });
+            }
+
+            // 3. Send message via Firebase
+            const message = {
+                notification: {
+                    title,
+                    body,
+                },
+                data: fcmData,
+                token: pushToken,
+            };
+
+            const response = await messaging.send(message);
+            console.log(`[Push to Courier] Successfully sent message to courier ${courierId}:`, response);
+            return response;
+        } catch (error: any) {
+            console.error(`[Push to Courier] Error sending push notification to courier ${courierId}:`, error.message);
+            return null;
+        }
     }
 
     async sendPushNotificationToMerchant(merchantId: string, title: string, body: string, data?: any) {

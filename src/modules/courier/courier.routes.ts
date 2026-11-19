@@ -12,6 +12,8 @@ router.use(roleMiddleware(['courier']));
 // Profile
 router.get('/profile', courierController.getProfile);
 router.put('/profile', courierController.updateProfile);
+router.post('/push-id', courierController.updatePushId);
+router.put('/push-id', courierController.updatePushId);
 
 // Availability
 router.post('/go-online', courierController.goOnline);

@@ -1,6 +1,8 @@
 import { supabase } from '../../config/supabase';
 import { SocketService } from '../notifications/socket.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { OrderStatus } from '../../common/constants/orderStatus';
+import { locationService, parseLatLng } from '../orders/location.service';
 
 const ORDER_SELECT = `
     *,
@@ -449,7 +451,9 @@ export class AdminDispatchService {
 
         const { data: order, error: orderError } = await supabase
             .from('orders')
-            .select('id, status, courier_id')
+            .select(
+                'id, status, courier_id, delivery_fee, delivery_lat, delivery_lng, merchant:merchants!orders_merchant_id_fkey(latitude, longitude), address:addresses(latitude, longitude)',
+            )
             .eq('id', orderId)
             .single();
 
@@ -468,13 +472,77 @@ export class AdminDispatchService {
             };
         }
 
+        let courierPoint = null;
+        const { data: courierLoc, error: courierLocError } = await supabase
+            .from('courier_locations')
+            .select('lat, lng')
+            .eq('courier_id', courierId)
+            .maybeSingle();
+
+        if (!courierLocError && courierLoc) {
+            courierPoint = parseLatLng((courierLoc as any).lat, (courierLoc as any).lng);
+        }
+
+        const updatePayload: Record<string, unknown> = { courier_id: courierId };
+        const merchantPoint = parseLatLng(
+            (order as any)?.merchant?.latitude,
+            (order as any)?.merchant?.longitude,
+        );
+        const customerPoint = parseLatLng(
+            (order as any)?.delivery_lat ?? (order as any)?.address?.latitude,
+            (order as any)?.delivery_lng ?? (order as any)?.address?.longitude,
+        );
+
+        let computedPricing: {
+            courier_earning: number;
+            pickup_distance_km: number;
+            dropoff_distance_km: number;
+            total_distance_km: number;
+        } | null = null;
+
+        if (merchantPoint && customerPoint) {
+            const trip = await locationService.calculateTwoLegTrip(
+                courierPoint,
+                merchantPoint,
+                customerPoint,
+                { useCache: false },
+            );
+            const effectiveFee = Math.max(trip.fee, Number((order as any).delivery_fee || 0));
+            const courierEarning = locationService.calculateCourierEarning(effectiveFee);
+            computedPricing = {
+                courier_earning: courierEarning,
+                pickup_distance_km: trip.pickupDistanceKm,
+                dropoff_distance_km: trip.dropoffDistanceKm,
+                total_distance_km: trip.totalDistanceKm,
+            };
+            Object.assign(updatePayload, computedPricing);
+        }
+
         // Match courier.acceptOrder: assign courier only; keep status ready_for_pickup.
-        const { data, error } = await supabase
+        let { data, error } = await supabase
             .from('orders')
-            .update({ courier_id: courierId })
+            .update(updatePayload)
             .eq('id', orderId)
             .select()
             .single();
+
+        if (
+            error &&
+            ((error as any).code === 'PGRST204' ||
+                error.message?.includes('courier_earning') ||
+                error.message?.includes('pickup_distance_km') ||
+                error.message?.includes('dropoff_distance_km') ||
+                error.message?.includes('total_distance_km'))
+        ) {
+            const fallbackRes = await supabase
+                .from('orders')
+                .update({ courier_id: courierId })
+                .eq('id', orderId)
+                .select()
+                .single();
+            data = fallbackRes.data;
+            error = fallbackRes.error;
+        }
 
         if (error) {
             return { success: false, message: error.message };
@@ -487,14 +555,25 @@ export class AdminDispatchService {
                 courierId: courier.user_id,
                 message: 'You have been assigned a new delivery by admin',
             });
+            const notificationsService = new NotificationsService();
+            await notificationsService.sendPushNotificationToCourier(
+                courierId,
+                'New Delivery Assigned!',
+                'You have been assigned a new delivery by admin.',
+                { orderId, type: 'delivery:assigned' }
+            );
         } catch {
-            // Socket notification is best-effort
+            // Socket & push notification is best-effort
         }
+
+        const shapedInput = computedPricing
+            ? { ...(data as Record<string, unknown>), ...computedPricing }
+            : (data as Record<string, unknown>);
 
         return {
             success: true,
             message: 'Courier assigned successfully',
-            data: shapeOrderRow(data as Record<string, unknown>),
+            data: shapeOrderRow(shapedInput),
         };
     }
 }

@@ -4,7 +4,7 @@ import { CartService } from '../cart/cart.service';
 import { WalletService } from '../payments/wallet.service';
 import { SocketService } from '../notifications/socket.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { LocationService } from './location.service';
+import { BASE_DELIVERY_FEE, locationService, parseLatLng } from './location.service';
 import { MerchantEarningsService } from '../merchant/earnings.service';
 import { UtilityService } from '../utility/utility.service';
 import { SurgeService } from '../utility/surge.service';
@@ -16,14 +16,31 @@ const cartService = new CartService();
 const walletService = new WalletService();
 const socketService = SocketService.getInstance();
 const notificationsService = new NotificationsService();
-const locationService = new LocationService();
 const earningsService = new MerchantEarningsService();
 const utilityService = new UtilityService();
 const surgeService = new SurgeService();
 const paystackService = new PaystackService();
 const emailService = new EmailService();
 
+const DELIVERY_QUOTE_CACHE_TTL_MS = 10 * 60 * 1000;
+
+export type DeliveryFeeEstimate = {
+    fee: number;
+    currency: string;
+    base_fee: number;
+    surge: { flat: number; percent: number; score: number; reasons: string[] };
+    pickup_distance_km: number;
+    dropoff_distance_km: number;
+    total_distance_km: number;
+    estimated_courier_earning: number;
+    includes_courier_pickup_distance: boolean;
+};
+
 export class OrdersService {
+    private readonly deliveryQuoteCache = new Map<
+        string,
+        { estimate: DeliveryFeeEstimate; expiresAt: number }
+    >();
     private merchantNotificationOrderSelect =
         '*, consumer:users!consumer_id(id, first_name, last_name, phone, email), address:addresses(*), items:order_items(*, product:products(*)), courier:couriers(*, user:users(*))';
     private readonly merchantManagedStatuses = [
@@ -161,6 +178,12 @@ export class OrdersService {
         });
 
         let deliveryFee = 0;
+        let deliveryEstimate: DeliveryFeeEstimate | null = null;
+        let usedCachedQuote = false;
+        const quoteCacheKey =
+            fulfillmentType === 'delivery' && data.addressId
+                ? `${userId}:${merchantId}:${data.addressId}`
+                : null;
         let addressId: string | null = null;
         // DB still has NOT NULL on delivery_address — for pickup, snapshot store location
         let deliveryAddress: string =
@@ -180,7 +203,15 @@ export class OrdersService {
 
             if (addressError || !address) throw new Error('Delivery address not found');
 
-            const deliveryEstimate = await this.getDeliveryFeeEstimate(merchantId, data.addressId);
+            const cachedQuote = quoteCacheKey ? this.deliveryQuoteCache.get(quoteCacheKey) : undefined;
+            if (cachedQuote && cachedQuote.expiresAt > Date.now()) {
+                deliveryEstimate = cachedQuote.estimate;
+                usedCachedQuote = true;
+            } else {
+                if (quoteCacheKey) this.deliveryQuoteCache.delete(quoteCacheKey);
+                deliveryEstimate = await this.getDeliveryFeeEstimate(merchantId, data.addressId, userId);
+            }
+
             deliveryFee = deliveryEstimate.fee;
             addressId = data.addressId;
             deliveryAddress = address.address;
@@ -188,7 +219,7 @@ export class OrdersService {
             deliveryLng = address.longitude;
         }
 
-        const totalAmount = subtotal + deliveryFee;
+        let totalAmount = subtotal + deliveryFee;
         const paymentMethod = data.paymentMethod || 'wallet';
         // Treat 'online_paid' as fully paid (Paystack verified)
         const isOnlinePaid = paymentMethod === 'online_paid';
@@ -203,6 +234,29 @@ export class OrdersService {
             if (!verified.paid) {
                 throw new Error(`Payment not successful (status: ${verified.status})`);
             }
+
+            if (verified.amountNaira + 1 < totalAmount && !usedCachedQuote && deliveryEstimate) {
+                const merchantPoint = parseLatLng(merchantStore?.latitude, merchantStore?.longitude);
+                const customerPoint = parseLatLng(deliveryLat, deliveryLng);
+                if (merchantPoint && customerPoint) {
+                    const dropoffTrip = await locationService.calculateTwoLegTrip(
+                        null,
+                        merchantPoint,
+                        customerPoint,
+                    );
+                    const dropoffMinFee = surgeService.applySurge(dropoffTrip.fee, deliveryEstimate.surge);
+                    if (verified.amountNaira + 1 >= subtotal + dropoffMinFee) {
+                        deliveryFee = Math.max(dropoffMinFee, Math.round(verified.amountNaira - subtotal));
+                        totalAmount = subtotal + deliveryFee;
+                        deliveryEstimate = {
+                            ...deliveryEstimate,
+                            fee: deliveryFee,
+                            estimated_courier_earning: locationService.calculateCourierEarning(deliveryFee),
+                        };
+                    }
+                }
+            }
+
             // Paid amount must cover order total (1 Naira tolerance)
             if (verified.amountNaira + 1 < totalAmount) {
                 throw new Error(
@@ -231,6 +285,10 @@ export class OrdersService {
             merchant_subtotal: merchantSubtotal,
             delivery_fee: deliveryFee,
             total_price: totalAmount,
+            courier_earning: deliveryEstimate ? deliveryEstimate.estimated_courier_earning : 0,
+            pickup_distance_km: deliveryEstimate ? deliveryEstimate.pickup_distance_km : 0,
+            dropoff_distance_km: deliveryEstimate ? deliveryEstimate.dropoff_distance_km : 0,
+            total_distance_km: deliveryEstimate ? deliveryEstimate.total_distance_km : 0,
             status: OrderStatus.PENDING,
             notes: riderNotesBase || notesBase || null,
             merchant_notes: merchantNotesBase || null,
@@ -250,27 +308,54 @@ export class OrdersService {
             .select()
             .single();
 
-        // Graceful fallback if columns do not exist yet in Supabase
-        if (orderError && (
-            orderError.message?.includes('merchant_notes') || 
-            orderError.message?.includes('rider_notes') || 
-            orderError.message?.includes('merchant_subtotal') || 
-            orderError.message?.includes('pickup_code') || 
-            orderError.message?.includes('delivery_code') || 
-            orderError.message?.includes('driver_pickup_code') || 
-            (orderError as any).code === 'PGRST204'
-        )) {
+        const pricingCols = [
+            'courier_earning',
+            'pickup_distance_km',
+            'dropoff_distance_km',
+            'total_distance_km',
+        ];
+        const legacyOptionalCols = [
+            'merchant_notes',
+            'rider_notes',
+            'merchant_subtotal',
+            'pickup_code',
+            'delivery_code',
+            'driver_pickup_code',
+        ];
+
+        // Graceful fallback if pricing columns do not exist yet in Supabase
+        if (
+            orderError &&
+            (pricingCols.some((c) => orderError?.message?.includes(c)) ||
+                (orderError as any).code === 'PGRST204')
+        ) {
+            for (const col of pricingCols) {
+                delete orderPayload[col];
+            }
+
+            const pricingFallbackRes = await supabase
+                .from('orders')
+                .insert([orderPayload])
+                .select()
+                .single();
+            order = pricingFallbackRes.data;
+            orderError = pricingFallbackRes.error;
+        }
+
+        // Graceful fallback if legacy note/code columns do not exist yet in Supabase
+        if (
+            orderError &&
+            (legacyOptionalCols.some((c) => orderError?.message?.includes(c)) ||
+                (orderError as any).code === 'PGRST204')
+        ) {
             const combinedNotes = [
                 merchantNotesBase ? `[Store]: ${merchantNotesBase}` : '',
                 riderNotesBase ? `[Rider]: ${riderNotesBase}` : ''
             ].filter(Boolean).join('\n') || null;
 
-            delete orderPayload.merchant_notes;
-            delete orderPayload.rider_notes;
-            delete orderPayload.merchant_subtotal;
-            delete orderPayload.pickup_code;
-            delete orderPayload.delivery_code;
-            delete orderPayload.driver_pickup_code;
+            for (const col of [...legacyOptionalCols, ...pricingCols]) {
+                delete orderPayload[col];
+            }
             orderPayload.notes = combinedNotes;
 
             const fallbackRes = await supabase
@@ -283,6 +368,10 @@ export class OrdersService {
         }
 
         if (orderError) throw new Error(orderError.message);
+
+        if (quoteCacheKey) {
+            this.deliveryQuoteCache.delete(quoteCacheKey);
+        }
 
         // 2. Debit wallet if applicable
         if (effectiveMethod === 'wallet') {
@@ -969,7 +1058,7 @@ export class OrdersService {
         return trackingData;
     }
 
-    async getDeliveryFeeEstimate(merchantId: string, addressId: string) {
+    async getDeliveryFeeEstimate(merchantId: string, addressId: string, userId?: string): Promise<DeliveryFeeEstimate> {
         const { data: merchant, error: mError } = await supabase
             .from('merchants')
             .select('latitude, longitude')
@@ -986,30 +1075,53 @@ export class OrdersService {
 
         if (aError || !address) throw new Error('Delivery address coordinates not found');
 
-        if (merchant.latitude === null || merchant.longitude === null ||
-            address.latitude === null || address.longitude === null) {
+        const merchantPoint = parseLatLng(merchant.latitude, merchant.longitude);
+        const customerPoint = parseLatLng(address.latitude, address.longitude);
+
+        if (!merchantPoint || !customerPoint) {
             return {
-                fee: 500,
+                fee: BASE_DELIVERY_FEE,
                 currency: 'NGN',
-                base_fee: 500,
+                base_fee: BASE_DELIVERY_FEE,
                 surge: { flat: 0, percent: 0, score: 0, reasons: [] as string[] },
+                pickup_distance_km: 0,
+                dropoff_distance_km: 0,
+                total_distance_km: 0,
+                estimated_courier_earning: locationService.calculateCourierEarning(BASE_DELIVERY_FEE),
+                includes_courier_pickup_distance: false,
             };
         }
 
-        const origin = { lat: merchant.latitude, lng: merchant.longitude };
-        const destination = { lat: address.latitude, lng: address.longitude };
-
-        const distanceKm = await locationService.calculateDistance(origin, destination);
-        const baseFee = locationService.calculateDeliveryFee(distanceKm);
+        const nearestCourier = await locationService.findNearestOnlineCourierLocation(merchantPoint);
+        const trip = await locationService.calculateTwoLegTrip(
+            nearestCourier?.location ?? null,
+            merchantPoint,
+            customerPoint,
+        );
         const caps = await utilityService.getSurgeCaps();
-        const surge = await surgeService.computeSurge(origin, destination, caps);
-        const fee = surgeService.applySurge(baseFee, surge);
+        const surge = await surgeService.computeSurge(merchantPoint, customerPoint, caps);
+        const fee = surgeService.applySurge(trip.fee, surge);
+        const estimatedCourierEarning = locationService.calculateCourierEarning(fee);
 
-        return {
+        const estimate: DeliveryFeeEstimate = {
             fee,
             currency: 'NGN',
-            base_fee: baseFee,
+            base_fee: trip.fee,
             surge,
+            pickup_distance_km: trip.pickupDistanceKm,
+            dropoff_distance_km: trip.dropoffDistanceKm,
+            total_distance_km: trip.totalDistanceKm,
+            estimated_courier_earning: estimatedCourierEarning,
+            includes_courier_pickup_distance: trip.includesPickupLeg,
         };
+
+        if (userId) {
+            this.deliveryQuoteCache.set(`${userId}:${merchantId}:${addressId}`, {
+                estimate,
+                expiresAt: Date.now() + DELIVERY_QUOTE_CACHE_TTL_MS,
+            });
+        }
+
+        return estimate;
     }
 }

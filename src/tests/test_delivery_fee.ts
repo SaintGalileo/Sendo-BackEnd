@@ -1,31 +1,51 @@
+import assert from 'assert';
 import dotenv from 'dotenv';
-import { LocationService } from '../modules/orders/location.service';
+import { locationService } from '../modules/orders/location.service';
 
 dotenv.config();
 
-const locationService = new LocationService();
-
 async function testDistance() {
-    // Sample coordinates (Lagos)
+    // 1. Single-leg fee & courier earning assertions
+    assert.strictEqual(locationService.calculateDeliveryFee(2.5), 1000, '<= 3km should be ₦1,000');
+    assert.strictEqual(locationService.calculateCourierEarning(1000), 800, '80% of ₦1,000 should be ₦800');
+    assert.strictEqual(locationService.calculateDeliveryFee(7), 1800, '7km should be ₦1,800');
+    assert.strictEqual(locationService.calculateCourierEarning(1800), 1440, '80% of ₦1,800 should be ₦1,440');
+
+    // 2. Two-leg trip (courier -> merchant -> customer in Lagos)
+    const courier = { lat: 6.4969, lng: 3.3553 }; // Surulere
     const merchant = { lat: 6.4547, lng: 3.3888 }; // Marina
-    const consumer = { lat: 6.5244, lng: 3.3792 }; // Ikeja (approx)
+    const consumer = { lat: 6.5244, lng: 3.3792 }; // Ikeja
 
-    console.log('Testing Distance Calculation...');
-    const distanceKm = await locationService.calculateDistance(merchant, consumer);
-    console.log(`- Distance: ${distanceKm.toFixed(2)} km`);
+    console.log('Testing Two-Leg Distance Calculation...');
+    const twoLeg = await locationService.calculateTwoLegTrip(courier, merchant, consumer);
+    console.log('- Two-Leg Result:', twoLeg);
 
-    const fee = locationService.calculateDeliveryFee(distanceKm);
-    console.log(`- Calculated Fee: ${fee} NGN`);
+    assert.strictEqual(twoLeg.includesPickupLeg, true, 'Two-leg trip should include pickup leg');
+    assert.ok(twoLeg.pickupDistanceKm > 0, 'Pickup leg distance should be > 0');
+    assert.ok(twoLeg.dropoffDistanceKm > 0, 'Dropoff leg distance should be > 0');
+    assert.ok(
+        Math.abs(twoLeg.totalDistanceKm - (twoLeg.pickupDistanceKm + twoLeg.dropoffDistanceKm)) <= 0.02,
+        'Total distance should equal pickup + dropoff',
+    );
+    assert.ok(twoLeg.fee >= 1000, 'Fee should be at least ₦1,000');
+    assert.strictEqual(
+        twoLeg.courierEarning,
+        Math.round(twoLeg.fee * 0.8 * 100) / 100,
+        'Courier earning should be 80% of total fee',
+    );
 
-    // Verify logic
-    // 6371 * acos(sin(6.4547*pi/180)*sin(6.5244*pi/180) + cos(6.4547*pi/180)*cos(6.5244*pi/180)*cos((3.3792-3.3888)*pi/180)) 
-    // approx 7-8 km
-    
-    if (distanceKm > 0 && fee >= 500) {
-        console.log('SUCCESS: Distance and fee logic operational.');
-    } else {
-        console.error('FAILURE: Invalid distance or fee.');
-    }
+    // 3. Null courier location fallback (merchant -> customer only)
+    const singleLeg = await locationService.calculateTwoLegTrip(null, merchant, consumer);
+    console.log('- Null Courier Fallback Result:', singleLeg);
+
+    assert.strictEqual(singleLeg.includesPickupLeg, false, 'Fallback should not include pickup leg');
+    assert.strictEqual(singleLeg.pickupDistanceKm, 0, 'Fallback pickup distance should be 0');
+    assert.ok(singleLeg.fee <= twoLeg.fee, 'Single-leg fee should be <= two-leg fee');
+
+    console.log('SUCCESS: All single-leg, two-leg, and fallback fee assertions passed.');
 }
 
-testDistance();
+testDistance().catch((err) => {
+    console.error('FAILURE:', err);
+    process.exit(1);
+});

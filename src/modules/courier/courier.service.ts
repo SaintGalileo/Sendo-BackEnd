@@ -5,6 +5,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { MerchantEarningsService } from '../merchant/earnings.service';
 import { UtilityService } from '../utility/utility.service';
 import { EmailService } from '../notifications/email.service';
+import { locationService, LatLng, parseLatLng } from '../orders/location.service';
 
 type DeliveryBucket = 'ongoing' | 'completed' | 'cancelled';
 type CourierDeliveryOrder = Record<string, any>;
@@ -13,6 +14,14 @@ type CourierDeliveriesGrouped = {
     completed: CourierDeliveryOrder[];
     cancelled: CourierDeliveryOrder[];
 };
+type CachedOrderPricing = {
+    courierEarning: number;
+    pickupDistanceKm: number;
+    dropoffDistanceKm: number;
+    totalDistanceKm: number;
+};
+
+const acceptedOrderPayoutCache = new Map<string, CachedOrderPricing>();
 
 export class CourierService {
     private readonly socketService = SocketService.getInstance();
@@ -33,6 +42,120 @@ export class CourierService {
         if (!error) return false;
         const message = `${error.message || ''}`.toLowerCase();
         return error.code === '42P01' || error.code === 'PGRST205' || message.includes('courier_locations');
+    }
+
+    private isPricingColumnMissing(error: any): boolean {
+        if (!error) return false;
+        const message = `${error.message || ''}`.toLowerCase();
+        return (
+            error.code === 'PGRST204' ||
+            message.includes('courier_earning') ||
+            message.includes('pickup_distance_km') ||
+            message.includes('dropoff_distance_km') ||
+            message.includes('total_distance_km')
+        );
+    }
+
+    private async getCourierLocation(
+        courierId: string,
+        overrideCoords?: { lat?: unknown; lng?: unknown },
+    ): Promise<LatLng | null> {
+        const override = parseLatLng(overrideCoords?.lat, overrideCoords?.lng);
+        if (override) return override;
+
+        const { data, error } = await supabase
+            .from('courier_locations')
+            .select('lat, lng')
+            .eq('courier_id', courierId)
+            .maybeSingle();
+
+        if (error) {
+            if (!this.isCourierLocationsTableMissing(error)) {
+                console.warn('[CourierService] Failed to read courier location:', error.message);
+            }
+            return null;
+        }
+
+        return parseLatLng((data as any)?.lat, (data as any)?.lng);
+    }
+
+    private extractOrderPoints(order: any): { merchantPoint: LatLng | null; customerPoint: LatLng | null } {
+        const merchantPoint = parseLatLng(order?.merchant?.latitude, order?.merchant?.longitude);
+        const customerPoint = parseLatLng(
+            order?.delivery_lat ?? order?.address?.latitude,
+            order?.delivery_lng ?? order?.address?.longitude,
+        );
+        return { merchantPoint, customerPoint };
+    }
+
+    private async computeCourierPricingForOrder(
+        courierPoint: LatLng | null,
+        order: any,
+        options?: { useCache?: boolean },
+    ): Promise<CachedOrderPricing & { effectiveFee: number }> {
+        const existingDeliveryFee = Number(order?.delivery_fee || 0);
+        const { merchantPoint, customerPoint } = this.extractOrderPoints(order);
+
+        if (merchantPoint && customerPoint) {
+            const trip = await locationService.calculateTwoLegTrip(
+                courierPoint,
+                merchantPoint,
+                customerPoint,
+                options,
+            );
+            const effectiveFee = Math.max(trip.fee, existingDeliveryFee);
+            const courierEarning = locationService.calculateCourierEarning(effectiveFee);
+            return {
+                courierEarning,
+                effectiveFee,
+                pickupDistanceKm: trip.pickupDistanceKm,
+                dropoffDistanceKm: trip.dropoffDistanceKm,
+                totalDistanceKm: trip.totalDistanceKm,
+            };
+        }
+
+        return {
+            courierEarning: locationService.calculateCourierEarning(existingDeliveryFee),
+            effectiveFee: existingDeliveryFee,
+            pickupDistanceKm: 0,
+            dropoffDistanceKm: 0,
+            totalDistanceKm: 0,
+        };
+    }
+
+    private attachPricingFields(order: any, pricing: CachedOrderPricing) {
+        return {
+            ...order,
+            courier_earning: pricing.courierEarning,
+            pickup_distance_km: pricing.pickupDistanceKm,
+            dropoff_distance_km: pricing.dropoffDistanceKm,
+            total_distance_km: pricing.totalDistanceKm,
+        };
+    }
+
+    private enrichStoredOrderPricing(order: any): any {
+        if (!order) return order;
+        const dbEarning = Number(order.courier_earning || 0);
+        const cached = order.id ? acceptedOrderPayoutCache.get(String(order.id)) : undefined;
+
+        if (dbEarning > 0) {
+            return order;
+        }
+
+        if (cached) {
+            return {
+                ...order,
+                courier_earning: cached.courierEarning,
+                pickup_distance_km: order.pickup_distance_km ?? cached.pickupDistanceKm,
+                dropoff_distance_km: order.dropoff_distance_km ?? cached.dropoffDistanceKm,
+                total_distance_km: order.total_distance_km ?? cached.totalDistanceKm,
+            };
+        }
+
+        return {
+            ...order,
+            courier_earning: locationService.calculateCourierEarning(Number(order.delivery_fee || 0)),
+        };
     }
 
     // --- Profile ---
@@ -65,6 +188,19 @@ export class CourierService {
         const { data, error } = await supabase
             .from('couriers')
             .update(updateData)
+            .eq('id', profile.id)
+            .select()
+            .single();
+
+        if (error) throw new Error(error.message);
+        return data;
+    }
+
+    async updatePushId(userId: string, pushId: string) {
+        const profile = await this.getProfile(userId);
+        const { data, error } = await supabase
+            .from('couriers')
+            .update({ push_id: pushId })
             .eq('id', profile.id)
             .select()
             .single();
@@ -140,7 +276,10 @@ export class CourierService {
     }
 
     // --- Jobs / Orders ---
-    async getAvailableOrders() {
+    async getAvailableOrders(userId: string, coords?: { lat?: unknown; lng?: unknown }) {
+        const profile = await this.getProfile(userId);
+        const courierPoint = await this.getCourierLocation(profile.id, coords);
+
         // Needs a PostGIS nearest neighbor query in real app.
         // For now, only expose orders that are actually ready for pickup.
         const { data, error } = await supabase
@@ -150,10 +289,18 @@ export class CourierService {
             .is('courier_id', null);
 
         if (error) throw new Error(error.message);
-        return data;
+
+        return Promise.all(
+            (data || []).map(async (order: any) => {
+                const pricing = await this.computeCourierPricingForOrder(courierPoint, order, {
+                    useCache: true,
+                });
+                return this.attachPricingFields(order, pricing);
+            }),
+        );
     }
 
-    async getOrderByIdForCourier(userId: string, orderId: string) {
+    async getOrderByIdForCourier(userId: string, orderId: string, coords?: { lat?: unknown; lng?: unknown }) {
         const profile = await this.getProfile(userId);
         const { data, error } = await supabase
             .from('orders')
@@ -163,7 +310,16 @@ export class CourierService {
             .single();
 
         if (error) throw new Error(error.message);
-        return data;
+
+        if (!data?.courier_id) {
+            const courierPoint = await this.getCourierLocation(profile.id, coords);
+            const pricing = await this.computeCourierPricingForOrder(courierPoint, data, {
+                useCache: true,
+            });
+            return this.attachPricingFields(data, pricing);
+        }
+
+        return this.enrichStoredOrderPricing(data);
     }
 
     async getDeliveries(userId: string, bucket: DeliveryBucket): Promise<CourierDeliveryOrder[]>;
@@ -181,7 +337,7 @@ export class CourierService {
                 .order('created_at', { ascending: false });
 
             if (error) throw new Error(error.message);
-            return data || [];
+            return (data || []).map((order) => this.enrichStoredOrderPricing(order));
         }
 
         const [ongoing, completed, cancelled]: [CourierDeliveryOrder[], CourierDeliveryOrder[], CourierDeliveryOrder[]] = await Promise.all([
@@ -197,12 +353,14 @@ export class CourierService {
         };
     }
 
-    async acceptOrder(userId: string, orderId: string) {
+    async acceptOrder(userId: string, orderId: string, coords?: { lat?: unknown; lng?: unknown }) {
         const profile = await this.getProfile(userId);
 
         const { data: order, error: orderError } = await supabase
             .from('orders')
-            .select('status, courier_id, driver_pickup_code')
+            .select(
+                'status, courier_id, driver_pickup_code, delivery_fee, delivery_lat, delivery_lng, merchant:merchants(latitude, longitude), address:addresses(latitude, longitude)',
+            )
             .eq('id', orderId)
             .single();
 
@@ -212,31 +370,81 @@ export class CourierService {
             throw new Error('Order is not ready for pickup yet');
         }
 
-        const updatePayload: any = { courier_id: profile.id };
+        const overrideCoords = parseLatLng(coords?.lat, coords?.lng);
+        if (overrideCoords) {
+            const { error: locErr } = await supabase
+                .from('courier_locations')
+                .upsert(
+                    {
+                        courier_id: profile.id,
+                        lat: overrideCoords.lat,
+                        lng: overrideCoords.lng,
+                        updated_at: new Date().toISOString(),
+                    },
+                    { onConflict: 'courier_id' },
+                );
+            if (locErr && !this.isCourierLocationsTableMissing(locErr)) {
+                console.warn('[CourierService] Failed to persist courier coordinates on accept:', locErr.message);
+            }
+        }
+
+        const courierPoint = overrideCoords ?? (await this.getCourierLocation(profile.id));
+        const pricing = await this.computeCourierPricingForOrder(courierPoint, order, { useCache: false });
+        acceptedOrderPayoutCache.set(orderId, pricing);
+
+        const updatePayload: any = {
+            courier_id: profile.id,
+            courier_earning: pricing.courierEarning,
+            pickup_distance_km: pricing.pickupDistanceKm,
+            dropoff_distance_km: pricing.dropoffDistanceKm,
+            total_distance_km: pricing.totalDistanceKm,
+        };
         if (!(order as any).driver_pickup_code) {
             updatePayload.driver_pickup_code = Math.floor(1000 + Math.random() * 9000).toString();
         }
 
         let { data: assignedOrder, error } = await supabase
             .from('orders')
-            .update(updatePayload) // Just assign courier and claim code, status stays the same (e.g., PREPARING)
+            .update(updatePayload) // Just assign courier, lock two-leg pricing, and claim code
             .eq('id', orderId)
             .select()
             .single();
 
-        if (error && error.message?.includes('driver_pickup_code')) {
+        if (error && (error.message?.includes('driver_pickup_code') || this.isPricingColumnMissing(error))) {
+            const retryPayload: any = { ...updatePayload };
+            if (error.message?.includes('driver_pickup_code')) {
+                delete retryPayload.driver_pickup_code;
+            }
+            if (this.isPricingColumnMissing(error)) {
+                delete retryPayload.courier_earning;
+                delete retryPayload.pickup_distance_km;
+                delete retryPayload.dropoff_distance_km;
+                delete retryPayload.total_distance_km;
+            }
             const fallback = await supabase
                 .from('orders')
-                .update({ courier_id: profile.id })
+                .update(retryPayload)
                 .eq('id', orderId)
                 .select()
                 .single();
             assignedOrder = fallback.data;
             error = fallback.error;
+
+            if (error && (error.message?.includes('driver_pickup_code') || this.isPricingColumnMissing(error))) {
+                const minimalFallback = await supabase
+                    .from('orders')
+                    .update({ courier_id: profile.id })
+                    .eq('id', orderId)
+                    .select()
+                    .single();
+                assignedOrder = minimalFallback.data;
+                error = minimalFallback.error;
+            }
         }
 
         if (error) throw new Error(error.message);
-        const data = await this.getOrderByIdForCourier(userId, orderId);
+        const fetched = await this.getOrderByIdForCourier(userId, orderId, coords);
+        const data = this.attachPricingFields(fetched, pricing);
 
         // Notify User and Merchant
         this.socketService.emitToUser(data.consumer_id, 'order_status_changed', data);
@@ -350,9 +558,17 @@ export class CourierService {
             console.error('[CourierService] Failed to send push notification:', pushError.message);
         }
 
+        const cachedPricing = acceptedOrderPayoutCache.get(orderId);
+        const courierPayout =
+            Number(data.courier_earning) > 0
+                ? Number(data.courier_earning)
+                : cachedPricing?.courierEarning ??
+                  locationService.calculateCourierEarning(Number(data.delivery_fee || 0));
+
         // If delivered, calculate earnings
         if (status === OrderStatus.DELIVERED && existingOrder?.status !== OrderStatus.DELIVERED) {
-            await this.addEarning(profile.id, data.delivery_fee * 0.8, orderId); // Assuming courier gets 80%
+            await this.addEarning(profile.id, courierPayout, orderId);
+            acceptedOrderPayoutCache.delete(orderId);
 
             // In our model, vendors are not charged commission; customers pay the surge fee on top.
             // The vendor receives 100% of their base price + extras.
@@ -411,7 +627,10 @@ export class CourierService {
             });
         }
 
-        return data;
+        return {
+            ...data,
+            courier_earning: courierPayout,
+        };
     }
 
     // --- Earnings ---

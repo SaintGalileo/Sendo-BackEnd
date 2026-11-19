@@ -27,6 +27,20 @@ export class CourierController {
         }
     }
 
+    async updatePushId(req: AuthRequest, res: Response) {
+        try {
+            const pushId = req.body.pushId || req.body.push_id || req.body.token;
+            if (!pushId) {
+                return sendResponse(res, 400, false, 'pushId is required');
+            }
+
+            const updated = await courierService.updatePushId(req.user.id, String(pushId).trim());
+            return sendResponse(res, 200, true, 'Courier push_id updated successfully', updated);
+        } catch (error: any) {
+            return sendResponse(res, 500, false, error.message);
+        }
+    }
+
     // Availability
     async goOnline(req: AuthRequest, res: Response) {
         try {
@@ -78,7 +92,8 @@ export class CourierController {
     // Orders available
     async getAvailableOrders(req: AuthRequest, res: Response) {
         try {
-            const orders = await courierService.getAvailableOrders();
+            const { lat, lng } = req.query;
+            const orders = await courierService.getAvailableOrders(req.user.id, { lat, lng });
             return sendResponse(res, 200, true, 'Available orders fetched', orders);
         } catch (error: any) {
             return sendResponse(res, 500, false, error.message);
@@ -87,7 +102,8 @@ export class CourierController {
 
     async getOrderById(req: AuthRequest, res: Response) {
         try {
-            const order = await courierService.getOrderByIdForCourier(req.user.id, req.params.orderId as string);
+            const { lat, lng } = req.query;
+            const order = await courierService.getOrderByIdForCourier(req.user.id, req.params.orderId as string, { lat, lng });
             return sendResponse(res, 200, true, 'Order details fetched', order);
         } catch (error: any) {
             return sendResponse(res, 400, false, error.message);
@@ -120,7 +136,8 @@ export class CourierController {
 
     async acceptOrder(req: AuthRequest, res: Response) {
         try {
-            const order = await courierService.acceptOrder(req.user.id, req.params.orderId as string);
+            const { lat, lng } = req.body || {};
+            const order = await courierService.acceptOrder(req.user.id, req.params.orderId as string, { lat, lng });
             return sendResponse(res, 200, true, 'Order accepted', order);
         } catch (error: any) {
             return sendResponse(res, 400, false, error.message);
