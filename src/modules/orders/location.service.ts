@@ -25,6 +25,29 @@ export type TwoLegPricing = {
     includesPickupLeg: boolean;
 };
 
+export type RankedCourierCandidate = {
+    courierId: string;
+    userId: string | null;
+    name: string | null;
+    vehicleType: string | null;
+    location: LatLng;
+    straightLineKm: number;
+    activeCount: number;
+    rating: number;
+    ageMinutes: number;
+    score: number;
+};
+
+const ACTIVE_DISPATCH_STATUSES = [
+    'ready_for_pickup',
+    'accepted',
+    'preparing',
+    'picked_up',
+    'on_the_way',
+];
+
+const MAX_ACTIVE_ORDERS_FOR_RANKING = 3;
+
 export function isValidLatLng(point: unknown): point is LatLng {
     if (!point || typeof point !== 'object') return false;
     const candidate = point as Record<string, unknown>;
@@ -197,30 +220,49 @@ export class LocationService {
     }
 
     /**
-     * Finds the nearest online courier within MAX_NEAREST_COURIER_PICKUP_KM of the merchant.
+     * Ranks eligible online couriers near a merchant for smart dispatch and fee quoting.
+     * Pre-filters by bounding box and GPS freshness on courier_locations so it scales cleanly
+     * even with hundreds of online riders, excludes couriers at max capacity (3 active orders)
+     * or who already rejected the order, and scores by distance + active load + GPS freshness + rating.
      */
-    async findNearestOnlineCourierLocation(
+    async rankEligibleCouriersForMerchant(
         merchantPoint: LatLng,
-    ): Promise<{ courierId: string; location: LatLng; straightLineKm: number } | null> {
-        const { data: onlineCouriers, error: couriersError } = await supabase
-            .from('couriers')
-            .select('id')
-            .eq('is_online', true)
-            .limit(200);
+        options?: {
+            excludeOrderId?: string;
+            maxDistanceKm?: number;
+            staleMinutes?: number;
+            limit?: number;
+        },
+    ): Promise<RankedCourierCandidate[]> {
+        const maxDistanceKm = options?.maxDistanceKm ?? MAX_NEAREST_COURIER_PICKUP_KM;
+        const staleMinutes = options?.staleMinutes ?? 15;
+        const limit = options?.limit ?? 10;
 
-        if (couriersError || !onlineCouriers || onlineCouriers.length === 0) {
-            return null;
+        const latDelta = maxDistanceKm / 111.32;
+        const cosLat = Math.max(0.2, Math.cos((merchantPoint.lat * Math.PI) / 180));
+        const lngDelta = maxDistanceKm / (111.32 * cosLat);
+
+        const fetchLocationsWithin = async (minutes: number) => {
+            const cutoff = new Date(Date.now() - minutes * 60 * 1000).toISOString();
+            return supabase
+                .from('courier_locations')
+                .select('courier_id, lat, lng, updated_at')
+                .gte('lat', merchantPoint.lat - latDelta)
+                .lte('lat', merchantPoint.lat + latDelta)
+                .gte('lng', merchantPoint.lng - lngDelta)
+                .lte('lng', merchantPoint.lng + lngDelta)
+                .gte('updated_at', cutoff)
+                .order('updated_at', { ascending: false })
+                .limit(500);
+        };
+
+        let { data: locationRows, error: locationsError } = await fetchLocationsWithin(staleMinutes);
+        if (!locationsError && (!locationRows || locationRows.length === 0) && staleMinutes < 120) {
+            // Graceful fallback to 2h window if no ultra-fresh GPS ping is present
+            const fallback = await fetchLocationsWithin(120);
+            locationRows = fallback.data;
+            locationsError = fallback.error;
         }
-
-        const onlineIds = onlineCouriers.map((c: any) => c.id).filter(Boolean);
-        if (onlineIds.length === 0) {
-            return null;
-        }
-
-        const { data: locationRows, error: locationsError } = await supabase
-            .from('courier_locations')
-            .select('courier_id, lat, lng, updated_at')
-            .in('courier_id', onlineIds);
 
         if (locationsError) {
             const msg = `${locationsError.message || ''}`.toLowerCase();
@@ -229,32 +271,120 @@ export class LocationService {
                 locationsError.code === 'PGRST205' ||
                 msg.includes('courier_locations')
             ) {
-                console.warn('[LocationService] courier_locations table missing; skipping nearest courier lookup.');
+                console.warn('[LocationService] courier_locations table missing; skipping rider ranking.');
             } else {
                 console.warn('[LocationService] Failed to query courier_locations:', locationsError.message);
             }
-            return null;
+            return [];
         }
 
-        let best: { courierId: string; location: LatLng; straightLineKm: number } | null = null;
+        if (!locationRows || locationRows.length === 0) return [];
 
-        for (const row of locationRows || []) {
+        const locByCourierId = new Map<string, { location: LatLng; updatedAt: number }>();
+        for (const row of locationRows) {
+            const cid = (row as any).courier_id ? String((row as any).courier_id) : '';
+            if (!cid || locByCourierId.has(cid)) continue;
             const loc = parseLatLng((row as any).lat, (row as any).lng);
-            if (!loc || !(row as any).courier_id) continue;
-
-            const dist = haversineDistanceKm(loc, merchantPoint);
-            if (dist > MAX_NEAREST_COURIER_PICKUP_KM) continue;
-
-            if (!best || dist < best.straightLineKm) {
-                best = {
-                    courierId: String((row as any).courier_id),
-                    location: loc,
-                    straightLineKm: dist,
-                };
-            }
+            if (!loc) continue;
+            const updatedAt = (row as any).updated_at ? new Date((row as any).updated_at).getTime() : Date.now();
+            locByCourierId.set(cid, { location: loc, updatedAt });
         }
 
-        return best;
+        const candidateIds = Array.from(locByCourierId.keys());
+        if (candidateIds.length === 0) return [];
+
+        const [couriersRes, activeOrdersRes, rejectionsRes] = await Promise.all([
+            supabase
+                .from('couriers')
+                .select('id, user_id, name, vehicle_type, is_online, rating')
+                .in('id', candidateIds)
+                .eq('is_online', true),
+            supabase
+                .from('orders')
+                .select('courier_id')
+                .in('courier_id', candidateIds)
+                .in('status', ACTIVE_DISPATCH_STATUSES),
+            options?.excludeOrderId
+                ? supabase
+                      .from('courier_order_rejections')
+                      .select('courier_id')
+                      .eq('order_id', options.excludeOrderId)
+                      .in('courier_id', candidateIds)
+                : Promise.resolve({ data: [], error: null }),
+        ]);
+
+        if (couriersRes.error || !couriersRes.data || couriersRes.data.length === 0) {
+            return [];
+        }
+
+        const activeCountMap = new Map<string, number>();
+        for (const row of activeOrdersRes.data || []) {
+            const cid = (row as any).courier_id ? String((row as any).courier_id) : '';
+            if (!cid) continue;
+            activeCountMap.set(cid, (activeCountMap.get(cid) || 0) + 1);
+        }
+
+        const rejectedSet = new Set<string>(
+            (rejectionsRes.data || []).map((r: any) => String(r.courier_id)),
+        );
+
+        const now = Date.now();
+        const ranked: RankedCourierCandidate[] = [];
+
+        for (const courier of couriersRes.data as any[]) {
+            const cid = String(courier.id);
+            if (rejectedSet.has(cid)) continue;
+
+            const activeCount = activeCountMap.get(cid) || 0;
+            if (activeCount >= MAX_ACTIVE_ORDERS_FOR_RANKING) continue;
+
+            const locEntry = locByCourierId.get(cid);
+            if (!locEntry) continue;
+
+            const straightLineKm = haversineDistanceKm(locEntry.location, merchantPoint);
+            if (straightLineKm > maxDistanceKm) continue;
+
+            const ageMinutes = Math.max(0, (now - locEntry.updatedAt) / 60000);
+            const rating = Number(courier.rating) > 0 ? Number(courier.rating) : 4.5;
+
+            // Composite score (lower is better): distance + load penalty + staleness penalty - rating bonus
+            const score =
+                straightLineKm +
+                activeCount * 1.5 +
+                Math.min(ageMinutes, 30) * 0.1 -
+                Math.max(0, rating - 4.0) * 0.5;
+
+            ranked.push({
+                courierId: cid,
+                userId: courier.user_id ? String(courier.user_id) : null,
+                name: courier.name || null,
+                vehicleType: courier.vehicle_type || null,
+                location: locEntry.location,
+                straightLineKm: round2(straightLineKm),
+                activeCount,
+                rating,
+                ageMinutes: round2(ageMinutes),
+                score: round2(score),
+            });
+        }
+
+        ranked.sort((a, b) => a.score - b.score);
+        return ranked.slice(0, limit);
+    }
+
+    /**
+     * Finds the best eligible online courier near the merchant.
+     */
+    async findNearestOnlineCourierLocation(
+        merchantPoint: LatLng,
+    ): Promise<{ courierId: string; location: LatLng; straightLineKm: number } | null> {
+        const ranked = await this.rankEligibleCouriersForMerchant(merchantPoint, { limit: 1 });
+        if (ranked.length === 0) return null;
+        return {
+            courierId: ranked[0].courierId,
+            location: ranked[0].location,
+            straightLineKm: ranked[0].straightLineKm,
+        };
     }
 }
 

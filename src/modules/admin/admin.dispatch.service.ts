@@ -472,6 +472,22 @@ export class AdminDispatchService {
             };
         }
 
+        const { count: activeCount, error: countError } = await supabase
+            .from('orders')
+            .select('id', { count: 'exact', head: true })
+            .eq('courier_id', courierId)
+            .in('status', [...ONGOING_STATUSES]);
+
+        if (countError) {
+            return { success: false, message: countError.message };
+        }
+        if ((activeCount || 0) >= 3) {
+            return {
+                success: false,
+                message: 'Courier already has the maximum of 3 active orders',
+            };
+        }
+
         let courierPoint = null;
         const { data: courierLoc, error: courierLocError } = await supabase
             .from('courier_locations')
@@ -523,6 +539,7 @@ export class AdminDispatchService {
             .from('orders')
             .update(updatePayload)
             .eq('id', orderId)
+            .is('courier_id', null)
             .select()
             .single();
 
@@ -538,6 +555,7 @@ export class AdminDispatchService {
                 .from('orders')
                 .update({ courier_id: courierId })
                 .eq('id', orderId)
+                .is('courier_id', null)
                 .select()
                 .single();
             data = fallbackRes.data;
@@ -575,5 +593,32 @@ export class AdminDispatchService {
             message: 'Courier assigned successfully',
             data: shapeOrderRow(shapedInput),
         };
+    }
+
+    async getRecommendedCouriers(orderId: string, limit = 10) {
+        const { data: order, error } = await supabase
+            .from('orders')
+            .select('id, merchant:merchants!orders_merchant_id_fkey(latitude, longitude)')
+            .eq('id', orderId)
+            .single();
+
+        if (error || !order) {
+            return { success: false, message: 'Order not found', data: [] };
+        }
+
+        const merchantPoint = parseLatLng(
+            (order as any)?.merchant?.latitude,
+            (order as any)?.merchant?.longitude,
+        );
+        if (!merchantPoint) {
+            return { success: false, message: 'Merchant coordinates unavailable', data: [] };
+        }
+
+        const candidates = await locationService.rankEligibleCouriersForMerchant(merchantPoint, {
+            excludeOrderId: orderId,
+            limit,
+        });
+
+        return { success: true, data: candidates };
     }
 }

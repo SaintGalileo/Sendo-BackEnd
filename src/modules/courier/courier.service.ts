@@ -23,6 +23,8 @@ type CachedOrderPricing = {
     totalDistanceKm: number;
 };
 
+export const MAX_ACTIVE_COURIER_ORDERS = 3;
+
 const acceptedOrderPayoutCache = new Map<string, CachedOrderPricing>();
 
 export class CourierService {
@@ -35,10 +37,27 @@ export class CourierService {
         '*, merchant:merchants(*), address:addresses(*), consumer:users!consumer_id(id, first_name, last_name, phone, email), items:order_items(*, product:products(*)), courier:couriers(*, user:users(*))';
     
     private readonly deliveryStatusMap = {
-        ongoing: [OrderStatus.PICKED_UP, OrderStatus.ON_THE_WAY, OrderStatus.READY_FOR_PICKUP],
+        ongoing: [
+            OrderStatus.PICKED_UP,
+            OrderStatus.ON_THE_WAY,
+            OrderStatus.READY_FOR_PICKUP,
+            OrderStatus.ACCEPTED,
+            OrderStatus.PREPARING,
+        ],
         completed: [OrderStatus.DELIVERED],
         cancelled: [OrderStatus.CANCELLED]
     } as const;
+
+    private async getActiveOrderCount(courierId: string): Promise<number> {
+        const { count, error } = await supabase
+            .from('orders')
+            .select('id', { count: 'exact', head: true })
+            .eq('courier_id', courierId)
+            .in('status', [...this.deliveryStatusMap.ongoing]);
+
+        if (error) throw new Error(error.message);
+        return count || 0;
+    }
 
     private isCourierLocationsTableMissing(error: any): boolean {
         if (!error) return false;
@@ -280,7 +299,22 @@ export class CourierService {
     // --- Jobs / Orders ---
     async getAvailableOrders(userId: string, coords?: { lat?: unknown; lng?: unknown }) {
         const profile = await this.getProfile(userId);
+        const activeCount = await this.getActiveOrderCount(profile.id);
+        if (activeCount >= MAX_ACTIVE_COURIER_ORDERS) {
+            return [];
+        }
+
         const courierPoint = await this.getCourierLocation(profile.id, coords);
+
+        // Fetch orders this courier already rejected so we don't keep showing them
+        let rejectedOrderIds = new Set<string>();
+        const { data: rejections } = await supabase
+            .from('courier_order_rejections')
+            .select('order_id')
+            .eq('courier_id', profile.id);
+        if (Array.isArray(rejections)) {
+            rejectedOrderIds = new Set(rejections.map((r: any) => String(r.order_id)));
+        }
 
         // Needs a PostGIS nearest neighbor query in real app.
         // For now, only expose orders that are actually ready for pickup.
@@ -292,8 +326,10 @@ export class CourierService {
 
         if (error) throw new Error(error.message);
 
+        const visible = (data || []).filter((o: any) => !rejectedOrderIds.has(String(o.id)));
+
         return Promise.all(
-            (data || []).map(async (order: any) => {
+            visible.map(async (order: any) => {
                 const pricing = await this.computeCourierPricingForOrder(courierPoint, order, {
                     useCache: true,
                 });
@@ -357,6 +393,12 @@ export class CourierService {
 
     async acceptOrder(userId: string, orderId: string, coords?: { lat?: unknown; lng?: unknown }) {
         const profile = await this.getProfile(userId);
+        const activeCount = await this.getActiveOrderCount(profile.id);
+        if (activeCount >= MAX_ACTIVE_COURIER_ORDERS) {
+            throw new Error(
+                `You can only accept up to ${MAX_ACTIVE_COURIER_ORDERS} active orders at a time. Complete an ongoing delivery first.`,
+            );
+        }
 
         const { data: order, error: orderError } = await supabase
             .from('orders')
@@ -409,6 +451,7 @@ export class CourierService {
             .from('orders')
             .update(updatePayload) // Just assign courier, lock two-leg pricing, and claim code
             .eq('id', orderId)
+            .is('courier_id', null)
             .select()
             .single();
 
@@ -427,6 +470,7 @@ export class CourierService {
                 .from('orders')
                 .update(retryPayload)
                 .eq('id', orderId)
+                .is('courier_id', null)
                 .select()
                 .single();
             assignedOrder = fallback.data;
@@ -437,6 +481,7 @@ export class CourierService {
                     .from('orders')
                     .update({ courier_id: profile.id })
                     .eq('id', orderId)
+                    .is('courier_id', null)
                     .select()
                     .single();
                 assignedOrder = minimalFallback.data;
@@ -444,7 +489,12 @@ export class CourierService {
             }
         }
 
-        if (error) throw new Error(error.message);
+        if (error) {
+            if (error.code === 'PGRST116') {
+                throw new Error('Order already assigned');
+            }
+            throw new Error(error.message);
+        }
         const fetched = await this.getOrderByIdForCourier(userId, orderId, coords);
         const data = this.attachPricingFields(fetched, pricing);
 

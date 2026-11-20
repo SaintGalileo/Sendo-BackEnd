@@ -131,6 +131,7 @@ router.get('/dispatch/counts', dispatchCtrl.getCounts);
 router.get('/dispatch/overview-map', dispatchCtrl.getOverviewMap);
 router.get('/dispatch/orders/available', dispatchCtrl.listAvailableOrders);
 router.get('/dispatch/orders/ongoing', dispatchCtrl.listOngoingOrders);
+router.get('/dispatch/orders/:orderId/recommended-couriers', dispatchCtrl.getRecommendedCouriers);
 router.post('/dispatch/orders/:orderId/assign', dispatchCtrl.assignCourier);
 
 // ── Transactions ──

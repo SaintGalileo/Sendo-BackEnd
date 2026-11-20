@@ -40,4 +40,10 @@ export class AdminDispatchController {
         const result = await service.assignCourier(req.params.orderId as string, courierId);
         return res.status(result.success ? 200 : 400).json(result);
     }
+
+    async getRecommendedCouriers(req: Request, res: Response) {
+        const limit = req.query.limit ? Number(req.query.limit) : 10;
+        const result = await service.getRecommendedCouriers(req.params.orderId as string, limit);
+        return res.status(result.success ? 200 : 400).json(result);
+    }
 }

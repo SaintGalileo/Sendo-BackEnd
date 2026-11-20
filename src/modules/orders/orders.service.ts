@@ -683,6 +683,32 @@ export class OrdersService {
                     body = 'Your order is ready and waiting for a courier.';
                     if (!data.courier_id) {
                         socketService.emitToAvailableDrivers('new_available_order', fullOrder);
+
+                        // Targeted smart dispatch: push-notify top-ranked nearby eligible riders
+                        const mPoint = parseLatLng(
+                            (fullOrder as any)?.merchant?.latitude,
+                            (fullOrder as any)?.merchant?.longitude,
+                        );
+                        if (mPoint) {
+                            locationService
+                                .rankEligibleCouriersForMerchant(mPoint, {
+                                    excludeOrderId: orderId,
+                                    limit: 5,
+                                })
+                                .then((candidates) =>
+                                    Promise.allSettled(
+                                        candidates.map((c) =>
+                                            notificationsService.sendPushNotificationToCourier(
+                                                c.courierId,
+                                                'New Delivery Nearby!',
+                                                `${(fullOrder as any)?.merchant?.name || 'A store'} (${c.straightLineKm} km away) has an order ready for pickup.`,
+                                                { orderId, type: 'new_available_order' },
+                                            ),
+                                        ),
+                                    ),
+                                )
+                                .catch(() => {});
+                        }
                     }
                 }
                 break;
