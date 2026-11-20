@@ -79,9 +79,11 @@ router.get('/dashboard', dashboardCtrl.getOverview);
 
 // ── Orders ──
 router.get('/orders/counts', ordersCtrl.getCounts);
+router.get('/orders/unsettled', (req, res) => ordersCtrl.listUnsettled(req, res));
 router.get('/orders', ordersCtrl.listOrders);
 router.get('/orders/:id', ordersCtrl.getOrder);
 router.post('/orders/:id/cancel', ordersCtrl.cancelOrder);
+router.post('/orders/:id/force-complete', (req, res) => ordersCtrl.forceComplete(req, res));
 
 // ── Users ──
 router.get('/users/overview', (req, res) => usersCtrl.getUsersOverview(req, res));

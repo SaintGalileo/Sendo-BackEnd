@@ -167,7 +167,16 @@ export class CourierController {
     async deliveredOrder(req: AuthRequest, res: Response) {
         try {
             const code = req.body?.code || req.body?.delivery_code || req.body?.verification_code;
-            const order = await courierService.updateOrderDeliveryStatus(req.user.id, req.params.orderId as string, OrderStatus.DELIVERED, code);
+            const proofPhotoUrl = req.body?.proofPhotoUrl || req.body?.proof_photo_url || req.body?.imageUrl;
+            const lat = req.body?.lat != null ? Number(req.body.lat) : undefined;
+            const lng = req.body?.lng != null ? Number(req.body.lng) : undefined;
+            const order = await courierService.updateOrderDeliveryStatus(
+                req.user.id,
+                req.params.orderId as string,
+                OrderStatus.DELIVERED,
+                code,
+                { proofPhotoUrl, lat, lng },
+            );
             return sendResponse(res, 200, true, 'Order delivered', order);
         } catch (error: any) {
             return sendResponse(res, 400, false, error.message);

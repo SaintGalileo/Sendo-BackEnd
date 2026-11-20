@@ -59,6 +59,15 @@ export class OrdersController {
         }
     }
 
+    async confirmDelivery(req: AuthRequest, res: Response) {
+        try {
+            const order = await ordersService.confirmDeliveryByCustomer(req.user.id, req.params.orderId as string);
+            return sendResponse(res, 200, true, 'Delivery confirmed and settled', order);
+        } catch (error: any) {
+            return sendResponse(res, 400, false, error.message);
+        }
+    }
+
     async rateOrder(req: AuthRequest, res: Response) {
         try {
             const { rating, merchantRating, courierRating, comment } = req.body;

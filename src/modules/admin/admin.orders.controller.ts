@@ -42,4 +42,20 @@ export class AdminOrdersController {
         const result = await service.cancelOrder(req.params.id as string);
         return res.status(result.success ? 200 : 400).json(result);
     }
+
+    async listUnsettled(req: Request, res: Response) {
+        const staleMinutes = req.query.staleMinutes ? Number(req.query.staleMinutes) : 30;
+        const result = await service.listUnsettledOrders(staleMinutes);
+        return res.status(result.success ? 200 : 500).json(result);
+    }
+
+    async forceComplete(req: Request, res: Response) {
+        const user = (req as any).user;
+        const actor = user
+            ? { id: user.id, email: user.email }
+            : undefined;
+        const reason = req.body?.reason ? String(req.body.reason) : undefined;
+        const result = await service.forceCompleteAndSettle(req.params.id as string, actor, reason);
+        return res.status(result.success ? 200 : 400).json(result);
+    }
 }

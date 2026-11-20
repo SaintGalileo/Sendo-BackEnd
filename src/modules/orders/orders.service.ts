@@ -11,6 +11,7 @@ import { SurgeService } from '../utility/surge.service';
 import { computeProductSurgePrice } from '../utility/product-surge.util';
 import { PaystackService } from '../payments/paystack.service';
 import { EmailService } from '../notifications/email.service';
+import { orderSettlementService } from './settlement.service';
 
 const cartService = new CartService();
 const walletService = new WalletService();
@@ -714,69 +715,156 @@ export class OrdersService {
         }
 
         // --- Earnings Distribution ---
+        if (status === OrderStatus.PICKED_UP && existingOrder?.status !== OrderStatus.PICKED_UP) {
+            orderSettlementService
+                .settleMerchantForOrder(orderId, 'pickup', data)
+                .catch((err: any) =>
+                    console.error('[OrdersService] Failed pickup merchant settlement:', err?.message),
+                );
+        }
+
         if (status === OrderStatus.DELIVERED && existingOrder?.status !== OrderStatus.DELIVERED) {
             try {
-                // In our model, vendors are not charged commission; customers pay the surge fee on top.
-                // The vendor receives 100% of their base price + extras.
-                let merchantShare = Number(data.merchant_subtotal || 0);
-
-                if (!merchantShare) {
-                    const { data: orderItems } = await supabase
-                        .from('order_items')
-                        .select('quantity, price, extras, product:products(price)')
-                        .eq('order_id', orderId);
-
-                    if (orderItems && orderItems.length > 0) {
-                        merchantShare = orderItems.reduce((sum: number, it: any) => {
-                            const basePrice = it.product?.price != null ? Number(it.product.price) : Number(it.price || 0);
-                            const extraCost = (it.extras || []).reduce((s: number, ext: any) => s + (Number(ext.price) || 0), 0);
-                            return sum + (basePrice + extraCost) * (it.quantity || 1);
-                        }, 0);
-                    } else {
-                        merchantShare = Number(data.subtotal || 0);
-                    }
-                }
-
-                merchantShare = Math.round(merchantShare * 100) / 100;
-
-                console.log(`[OrdersService] Crediting vendor earnings for order ${orderId}: MerchantShare=₦${merchantShare} (Customer paid ₦${data.total_price}, subtotal ₦${data.subtotal})`);
-                await earningsService.addEarning(data.merchant_id, merchantShare);
-
-                const { data: merchantStore } = await supabase
-                    .from('merchants')
-                    .select('user_id, name')
-                    .eq('id', data.merchant_id)
-                    .single();
-
-                if (merchantStore && merchantStore.user_id) {
-                    const notifyMessage = `Order completed! ₦${merchantShare.toLocaleString()} has been credited to your balance.`;
-
-                    socketService.emitToUser(merchantStore.user_id, 'merchant_earning_credited', {
-                        subtotal: merchantShare,
-                        commissionPercentage: 0,
-                        commissionAmount: 0,
-                        merchantShare,
-                        message: notifyMessage,
-                    });
-
-                    await notificationsService.sendPushNotificationToMerchant(
-                        data.merchant_id,
-                        'Payout Credited!',
-                        notifyMessage,
-                        { type: 'EARNING_CREDITED', orderId: data.id }
-                    );
-                }
+                const settlement = await orderSettlementService.settleOrder(orderId, {
+                    stage: 'delivery',
+                    order: data,
+                });
 
                 // Send completion thank-you emails to customer and merchant
-                emailService.sendOrderDeliveredEmails(orderId, fullOrder || data, merchantShare).catch((err: any) => {
+                emailService.sendOrderDeliveredEmails(orderId, fullOrder || data, settlement.merchant.amount).catch((err: any) => {
                     console.error('[OrdersService] Failed to send delivered emails:', err.message);
                 });
             } catch (earnError: any) {
-                console.error('[OrdersService] Failed to distribute merchant earnings:', earnError.message);
+                console.error('[OrdersService] Failed to distribute order earnings:', earnError.message);
             }
         }
 
         return fullOrder;
+    }
+
+    async confirmDeliveryByCustomer(userId: string, orderId: string) {
+        const { data: existingOrder, error: fetchError } = await supabase
+            .from('orders')
+            .select('id, consumer_id, merchant_id, courier_id, status, fulfillment_type')
+            .eq('id', orderId)
+            .eq('consumer_id', userId)
+            .single();
+
+        if (fetchError || !existingOrder) {
+            throw new Error('Order not found');
+        }
+
+        const currentStatus = String(existingOrder.status || '').toLowerCase();
+        if (currentStatus === OrderStatus.DELIVERED) {
+            const settlement = await orderSettlementService.settleOrder(orderId, {
+                stage: 'customer_confirm',
+            });
+            const fullOrder = await this.getHydratedOrderById(orderId);
+            return { ...fullOrder, settlement };
+        }
+
+        if (![OrderStatus.PICKED_UP, OrderStatus.ON_THE_WAY].includes(currentStatus as OrderStatus)) {
+            throw new Error('Only orders that have been picked up or are on the way can be confirmed as received.');
+        }
+
+        let { error: updateErr } = await supabase
+            .from('orders')
+            .update({
+                status: OrderStatus.DELIVERED,
+                delivery_proof_method: 'customer_confirm',
+            })
+            .eq('id', orderId)
+            .eq('consumer_id', userId);
+
+        if (updateErr && ((updateErr as any).code === 'PGRST204' || updateErr.message?.includes('delivery_proof_method'))) {
+            const retry = await supabase
+                .from('orders')
+                .update({ status: OrderStatus.DELIVERED })
+                .eq('id', orderId)
+                .eq('consumer_id', userId);
+            updateErr = retry.error;
+        }
+
+        if (updateErr) throw new Error(updateErr.message);
+
+        const fullOrder = await this.getHydratedOrderById(orderId);
+        const settlement = await orderSettlementService.settleOrder(orderId, {
+            stage: 'customer_confirm',
+            order: fullOrder,
+        });
+
+        socketService.emitToUser(existingOrder.consumer_id, 'order_status_changed', fullOrder);
+        socketService.emitToMerchant(existingOrder.merchant_id, 'order_status_changed', fullOrder);
+        if (existingOrder.courier_id) {
+            socketService.emitToCourier(existingOrder.courier_id, 'order_status_changed', fullOrder);
+        }
+        socketService.emitToAvailableDrivers('available_order_cancelled', { orderId });
+
+        emailService.sendOrderDeliveredEmails(orderId, fullOrder, settlement.merchant.amount).catch((err: any) => {
+            console.error('[OrdersService] Failed to send delivered emails:', err.message);
+        });
+
+        return { ...fullOrder, settlement };
+    }
+
+    async autoSettleStaleDeliveries(staleMinutes = 90) {
+        try {
+            const cutoff = new Date(Date.now() - staleMinutes * 60 * 1000).toISOString();
+            const { data: staleOrders, error } = await supabase
+                .from('orders')
+                .select('id, consumer_id, merchant_id, courier_id, status, updated_at')
+                .in('status', [OrderStatus.PICKED_UP, OrderStatus.ON_THE_WAY])
+                .lt('updated_at', cutoff)
+                .limit(50);
+
+            if (error || !staleOrders || staleOrders.length === 0) {
+                return { settledCount: 0 };
+            }
+
+            let settledCount = 0;
+            for (const row of staleOrders) {
+                try {
+                    let { error: updateErr } = await supabase
+                        .from('orders')
+                        .update({
+                            status: OrderStatus.DELIVERED,
+                            delivery_proof_method: 'auto_sweep',
+                        })
+                        .eq('id', row.id);
+
+                    if (updateErr && ((updateErr as any).code === 'PGRST204' || updateErr.message?.includes('delivery_proof_method'))) {
+                        const retry = await supabase
+                            .from('orders')
+                            .update({ status: OrderStatus.DELIVERED })
+                            .eq('id', row.id);
+                        updateErr = retry.error;
+                    }
+
+                    if (updateErr) continue;
+
+                    await orderSettlementService.settleOrder(row.id, { stage: 'auto_sweep' });
+                    const fullOrder = await this.getHydratedOrderById(row.id).catch(() => null);
+                    if (fullOrder) {
+                        socketService.emitToUser(row.consumer_id, 'order_status_changed', fullOrder);
+                        socketService.emitToMerchant(row.merchant_id, 'order_status_changed', fullOrder);
+                        if (row.courier_id) {
+                            socketService.emitToCourier(row.courier_id, 'order_status_changed', fullOrder);
+                        }
+                    }
+                    settledCount += 1;
+                } catch (innerErr: any) {
+                    console.error(`[AutoSweep] Failed to settle stale order ${row.id}:`, innerErr?.message);
+                }
+            }
+
+            if (settledCount > 0) {
+                console.log(`[AutoSweep] Auto-settled ${settledCount} stale in-transit order(s).`);
+            }
+            return { settledCount };
+        } catch (err: any) {
+            console.error('[AutoSweep] Error sweeping stale deliveries:', err?.message);
+            return { settledCount: 0 };
+        }
     }
 
     async autoCancelStaleOrders(userId?: string) {

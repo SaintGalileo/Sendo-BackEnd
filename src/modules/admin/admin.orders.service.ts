@@ -1,5 +1,9 @@
 import { supabase } from '../../config/supabase';
 import { merchantIdsForScope } from './admin.scope';
+import { orderSettlementService } from '../orders/settlement.service';
+import { SocketService } from '../notifications/socket.service';
+import { OrderStatus } from '../../common/constants/orderStatus';
+import { AuditActor, writeAuditLog } from './admin.audit';
 
 export interface OrderFilters {
     status?: string;
@@ -214,5 +218,102 @@ export class AdminOrdersService {
         }
 
         return { success: true, message: 'Order cancelled', data };
+    }
+
+    async listUnsettledOrders(staleMinutes = 30) {
+        const cutoff = new Date(Date.now() - staleMinutes * 60 * 1000).toISOString();
+        const { data: stuckOrders, error } = await supabase
+            .from('orders')
+            .select(
+                'id, order_number, status, total_price, subtotal, merchant_subtotal, delivery_fee, courier_earning, merchant_id, courier_id, consumer_id, created_at, updated_at',
+            )
+            .in('status', [OrderStatus.PICKED_UP, OrderStatus.ON_THE_WAY])
+            .lt('updated_at', cutoff)
+            .order('updated_at', { ascending: true })
+            .limit(100);
+
+        if (error) {
+            return { success: false, message: error.message, data: [] };
+        }
+
+        return { success: true, data: stuckOrders || [] };
+    }
+
+    async forceCompleteAndSettle(id: string, actor?: AuditActor, reason?: string) {
+        const { data: existing, error: fetchError } = await supabase
+            .from('orders')
+            .select('*')
+            .eq('id', id)
+            .single();
+
+        if (fetchError || !existing) {
+            return { success: false, message: 'Order not found', data: null };
+        }
+
+        if (existing.status === OrderStatus.CANCELLED) {
+            return { success: false, message: 'Cannot force-complete a cancelled order', data: null };
+        }
+
+        const beforeStatus = existing.status;
+        if (beforeStatus !== OrderStatus.DELIVERED) {
+            let { error: updateErr } = await supabase
+                .from('orders')
+                .update({
+                    status: OrderStatus.DELIVERED,
+                    delivery_proof_method: 'admin_force',
+                })
+                .eq('id', id);
+
+            if (
+                updateErr &&
+                ((updateErr as any).code === 'PGRST204' || updateErr.message?.includes('delivery_proof_method'))
+            ) {
+                const retry = await supabase
+                    .from('orders')
+                    .update({ status: OrderStatus.DELIVERED })
+                    .eq('id', id);
+                updateErr = retry.error;
+            }
+
+            if (updateErr) {
+                return { success: false, message: updateErr.message, data: null };
+            }
+        }
+
+        const settlement = await orderSettlementService.settleOrder(id, {
+            stage: 'admin_force',
+            order: existing,
+        });
+
+        try {
+            const socketService = SocketService.getInstance();
+            const updatedOrder = { ...existing, status: OrderStatus.DELIVERED };
+            socketService.emitToUser(existing.consumer_id, 'order_status_changed', updatedOrder);
+            socketService.emitToMerchant(existing.merchant_id, 'order_status_changed', updatedOrder);
+            if (existing.courier_id) {
+                socketService.emitToCourier(existing.courier_id, 'order_status_changed', updatedOrder);
+            }
+        } catch {
+            // Best-effort socket emit
+        }
+
+        if (actor) {
+            await writeAuditLog({
+                action: 'update',
+                entityType: 'order',
+                entityId: id,
+                entityLabel: existing.order_number || id,
+                reason: reason?.trim() || 'Admin force-completed and settled order',
+                before: { status: beforeStatus },
+                after: { status: OrderStatus.DELIVERED, settlement },
+                actor,
+            }).catch(() => {});
+        }
+
+        return {
+            success: true,
+            message: 'Order marked delivered and settled',
+            data: { orderId: id, previousStatus: beforeStatus, settlement },
+        };
     }
 }

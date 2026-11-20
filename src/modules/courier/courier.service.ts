@@ -6,6 +6,8 @@ import { MerchantEarningsService } from '../merchant/earnings.service';
 import { UtilityService } from '../utility/utility.service';
 import { EmailService } from '../notifications/email.service';
 import { locationService, LatLng, parseLatLng } from '../orders/location.service';
+import { orderSettlementService } from '../orders/settlement.service';
+import { haversineDistanceKm } from '../../common/utils/geo.util';
 
 type DeliveryBucket = 'ongoing' | 'completed' | 'cancelled';
 type CourierDeliveryOrder = Record<string, any>;
@@ -484,23 +486,52 @@ export class CourierService {
     }
 
     // --- Delivery Process ---
-    async updateOrderDeliveryStatus(userId: string, orderId: string, status: string, verificationCode?: string) {
+    async updateOrderDeliveryStatus(
+        userId: string,
+        orderId: string,
+        status: string,
+        verificationCode?: string,
+        proofOptions?: { proofPhotoUrl?: string; lat?: number; lng?: number },
+    ) {
         const profile = await this.getProfile(userId);
         const { data: existingOrder, error: existingOrderError } = await supabase
             .from('orders')
-            .select('status, delivery_code, driver_pickup_code')
+            .select('status, delivery_code, driver_pickup_code, delivery_lat, delivery_lng')
             .eq('id', orderId)
             .eq('courier_id', profile.id)
             .single();
 
         if (existingOrderError) throw new Error(existingOrderError.message);
 
-        // Verify customer delivery code before completing delivery
+        const proofPhotoUrl = proofOptions?.proofPhotoUrl ? String(proofOptions.proofPhotoUrl).trim() : '';
+        let deliveryProofMethod: string | null = null;
+
+        // Verify customer delivery code (or DoorDash-style photo+GPS fallback) before completing delivery
         if (status === OrderStatus.DELIVERED && (existingOrder as any).delivery_code) {
             const expectedCode = String((existingOrder as any).delivery_code).trim();
             const providedCode = verificationCode != null ? String(verificationCode).trim() : '';
-            if (!providedCode || providedCode !== expectedCode) {
-                throw new Error('Invalid delivery verification code. Please ask the customer for their 4-digit code.');
+
+            if (providedCode && providedCode === expectedCode) {
+                deliveryProofMethod = 'pin';
+            } else if (proofPhotoUrl) {
+                const courierPos = parseLatLng(proofOptions?.lat, proofOptions?.lng);
+                const dropoffPos = parseLatLng(
+                    (existingOrder as any).delivery_lat,
+                    (existingOrder as any).delivery_lng,
+                );
+                if (courierPos && dropoffPos) {
+                    const distanceKm = haversineDistanceKm(courierPos, dropoffPos);
+                    if (distanceKm > 0.5) {
+                        throw new Error(
+                            'You appear too far from the delivery address to complete without the customer PIN.',
+                        );
+                    }
+                }
+                deliveryProofMethod = 'photo_gps';
+            } else {
+                throw new Error(
+                    'Invalid delivery verification code. Ask the customer for their 4-digit code or upload a drop-off photo.',
+                );
             }
         }
 
@@ -513,15 +544,63 @@ export class CourierService {
             }
         }
 
-        const { error } = await supabase
+        const updateFields: Record<string, unknown> = { status };
+        if (proofPhotoUrl && status === OrderStatus.DELIVERED) {
+            updateFields.courier_delivery_image = proofPhotoUrl;
+        }
+        if (deliveryProofMethod && status === OrderStatus.DELIVERED) {
+            updateFields.delivery_proof_method = deliveryProofMethod;
+        }
+
+        let { error } = await supabase
             .from('orders')
-            .update({ status })
+            .update(updateFields)
             .eq('id', orderId)
             .eq('courier_id', profile.id)
             .select()
             .single();
 
+        if (
+            error &&
+            ((error as any).code === 'PGRST204' ||
+                error.message?.includes('delivery_proof_method') ||
+                error.message?.includes('courier_delivery_image'))
+        ) {
+            const fallbackUpdate: Record<string, unknown> = { status };
+            if (proofPhotoUrl && !error.message?.includes('courier_delivery_image')) {
+                fallbackUpdate.courier_delivery_image = proofPhotoUrl;
+            }
+            const retryRes = await supabase
+                .from('orders')
+                .update(fallbackUpdate)
+                .eq('id', orderId)
+                .eq('courier_id', profile.id)
+                .select()
+                .single();
+            error = retryRes.error;
+        }
+
         if (error) throw new Error(error.message);
+
+        if (proofPhotoUrl && status === OrderStatus.DELIVERED) {
+            try {
+                await supabase.from('order_evidence').insert({
+                    order_id: orderId,
+                    actor_type: 'courier',
+                    actor_id: profile.id,
+                    stage: 'courier_delivery',
+                    image_url: proofPhotoUrl,
+                    metadata: {
+                        method: deliveryProofMethod || 'photo_gps',
+                        lat: proofOptions?.lat ?? null,
+                        lng: proofOptions?.lng ?? null,
+                    },
+                });
+            } catch {
+                // Best-effort evidence log
+            }
+        }
+
         const data = await this.getOrderByIdForCourier(userId, orderId);
 
         // Notify User and Merchant
@@ -565,64 +644,25 @@ export class CourierService {
                 : cachedPricing?.courierEarning ??
                   locationService.calculateCourierEarning(Number(data.delivery_fee || 0));
 
-        // If delivered, calculate earnings
+        // Stage 1 (DoorDash-style): Credit merchant upon verified courier pickup so store isn't blocked by drop-off issues
+        if (status === OrderStatus.PICKED_UP && existingOrder?.status !== OrderStatus.PICKED_UP) {
+            orderSettlementService
+                .settleMerchantForOrder(orderId, 'pickup', data)
+                .catch((err: any) =>
+                    console.error('[CourierService] Failed pickup merchant settlement:', err?.message),
+                );
+        }
+
+        // Stage 2: Settle both courier and merchant (idempotent) upon delivery completion
         if (status === OrderStatus.DELIVERED && existingOrder?.status !== OrderStatus.DELIVERED) {
-            await this.addEarning(profile.id, courierPayout, orderId);
+            const settlement = await orderSettlementService.settleOrder(orderId, {
+                stage: 'delivery',
+                order: { ...data, courier_earning: courierPayout },
+            });
             acceptedOrderPayoutCache.delete(orderId);
 
-            // In our model, vendors are not charged commission; customers pay the surge fee on top.
-            // The vendor receives 100% of their base price + extras.
-            let merchantShare = Number(data.merchant_subtotal || 0);
-
-            if (!merchantShare) {
-                const { data: orderItems } = await supabase
-                    .from('order_items')
-                    .select('quantity, price, extras, product:products(price)')
-                    .eq('order_id', orderId);
-
-                if (orderItems && orderItems.length > 0) {
-                    merchantShare = orderItems.reduce((sum: number, it: any) => {
-                        const basePrice = it.product?.price != null ? Number(it.product.price) : Number(it.price || 0);
-                        const extraCost = (it.extras || []).reduce((s: number, ext: any) => s + (Number(ext.price) || 0), 0);
-                        return sum + (basePrice + extraCost) * (it.quantity || 1);
-                    }, 0);
-                } else {
-                    merchantShare = Number(data.subtotal || 0);
-                }
-            }
-
-            merchantShare = Math.round(merchantShare * 100) / 100;
-
-            console.log(`[CourierService] Crediting vendor earnings for order ${orderId}: MerchantShare=₦${merchantShare} (Customer paid ₦${data.total_price}, subtotal ₦${data.subtotal})`);
-            await this.merchantEarningsService.addEarning(data.merchant_id, merchantShare);
-
-            const { data: merchantStore } = await supabase
-                .from('merchants')
-                .select('user_id, name')
-                .eq('id', data.merchant_id)
-                .single();
-
-            if (merchantStore && merchantStore.user_id) {
-                const notifyMessage = `Order completed! ₦${merchantShare.toLocaleString()} has been credited to your balance.`;
-
-                this.socketService.emitToUser(merchantStore.user_id, 'merchant_earning_credited', {
-                    subtotal: merchantShare,
-                    commissionPercentage: 0,
-                    commissionAmount: 0,
-                    merchantShare,
-                    message: notifyMessage,
-                });
-
-                await this.notificationsService.sendPushNotificationToMerchant(
-                    data.merchant_id,
-                    'Payout Credited!',
-                    notifyMessage,
-                    { type: 'EARNING_CREDITED', orderId: data.id }
-                );
-            }
-
             // Send completion thank-you emails to customer and merchant
-            this.emailService.sendOrderDeliveredEmails(orderId, data, merchantShare).catch(err => {
+            this.emailService.sendOrderDeliveredEmails(orderId, data, settlement.merchant.amount).catch(err => {
                 console.error('[CourierService] Failed to send delivered emails:', err.message);
             });
         }

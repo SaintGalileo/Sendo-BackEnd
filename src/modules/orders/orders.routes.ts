@@ -16,6 +16,7 @@ router.get('/history', ordersController.getOrders);
 router.get('/delivery-fee', ordersController.getDeliveryFeeEstimate);
 router.get('/:orderId', ordersController.getOrderById);
 router.post('/:orderId/cancel', ordersController.cancelOrder);
+router.post('/:orderId/confirm-delivery', ordersController.confirmDelivery);
 router.post('/:orderId/rate', ordersController.rateOrder);
 router.get('/:orderId/tracking', ordersController.getOrderTracking);
 
