@@ -333,6 +333,8 @@ export class AdminStoresService {
         if (normalized === 'verified' || normalized === 'active' || normalized === 'approved') {
             if (existing.verified_at) {
                 updates.status = 'verified';
+                updates.verification_status = 'verified';
+                updates.verified = true;
                 updates.verification_rejection_reason = null;
             } else {
                 const check = isVerificationComplete(existing);
@@ -344,6 +346,8 @@ export class AdminStoresService {
                     };
                 }
                 updates.status = 'verified';
+                updates.verification_status = 'verified';
+                updates.verified = true;
                 updates.verified_at = new Date().toISOString();
                 updates.verification_rejection_reason = null;
             }
@@ -353,6 +357,8 @@ export class AdminStoresService {
                 return { success: false, message: 'A decline reason is required (min 3 characters)', data: null };
             }
             updates.status = 'rejected';
+            updates.verification_status = 'rejected';
+            updates.verified = false;
             updates.verification_rejection_reason = why;
         } else if (normalized === 'suspended') {
             const why = requireAuditReason(reason);
@@ -369,12 +375,33 @@ export class AdminStoresService {
             updates.status = normalized;
         }
 
-        const { data, error } = await supabase
+        let { data, error } = await supabase
             .from('merchants')
             .update(updates)
             .eq('id', id)
             .select()
             .single();
+
+        if (
+            error &&
+            ((error as any).code === 'PGRST204' ||
+                error.message?.includes('verified') ||
+                error.message?.includes('verification_status'))
+        ) {
+            const fallbackUpdates = { ...updates };
+            delete fallbackUpdates.verified;
+            if (error.message?.includes('verification_status')) {
+                delete fallbackUpdates.verification_status;
+            }
+            const retry = await supabase
+                .from('merchants')
+                .update(fallbackUpdates)
+                .eq('id', id)
+                .select()
+                .single();
+            data = retry.data;
+            error = retry.error;
+        }
 
         if (error) return { success: false, message: error.message, data: null };
 

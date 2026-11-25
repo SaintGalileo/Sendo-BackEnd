@@ -121,7 +121,25 @@ export class MerchantOnboardingService {
             return { success: false, message: 'Merchant not found', data: null, code: 'MERCHANT_NOT_FOUND' };
         }
 
-        const merchants = data || [];
+        const normalizeMerchant = (m: any) => {
+            if (!m) return m;
+            const st = String(m.status || '').toLowerCase();
+            const vst = String(m.verification_status || '').toLowerCase();
+            const isVerified =
+                m.verified === true ||
+                m.is_verified === true ||
+                vst === 'verified' ||
+                st === 'verified' ||
+                st === 'active' ||
+                st === 'approved';
+            return {
+                ...m,
+                verified: isVerified,
+                verification_status: isVerified ? 'verified' : (m.verification_status || (st === 'pending_verification' ? 'pending' : 'unverified')),
+            };
+        };
+
+        const merchants = (data || []).map(normalizeMerchant);
         if (merchants.length === 0) {
             return { success: false, message: 'Merchant not found', data: null, code: 'MERCHANT_NOT_FOUND' };
         }
