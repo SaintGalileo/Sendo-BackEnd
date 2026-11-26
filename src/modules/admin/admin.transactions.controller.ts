@@ -57,6 +57,16 @@ export class AdminTransactionsController {
         return res.json(result);
     }
 
+    async updateStoreWithdrawalStatus(req: Request, res: Response) {
+        const id = req.params.id as string;
+        const { status, reason } = req.body || {};
+        if (!status) {
+            return res.status(400).json({ success: false, message: 'Status is required' });
+        }
+        const result = await service.updateStoreWithdrawalStatus(id, status, reason);
+        return res.status(result.success ? 200 : 400).json(result);
+    }
+
     async getCourierWithdrawals(req: Request, res: Response) {
         const { page, limit, dateFrom, dateTo, status, from, to } = req.query;
         const result = await service.getCourierWithdrawals({

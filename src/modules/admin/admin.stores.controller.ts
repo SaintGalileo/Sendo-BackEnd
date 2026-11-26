@@ -29,7 +29,7 @@ export class AdminStoresController {
     }
 
     async updateStoreStatus(req: AuthRequest, res: Response) {
-        const { status, reason, rejection_reason } = req.body || {};
+        const { status, reason, rejection_reason, force } = req.body || {};
         if (!status) return res.status(400).json({ success: false, message: 'Status is required' });
         const note = reason ?? rejection_reason;
         const needsReason = ['suspended', 'rejected'].includes(String(status));
@@ -48,6 +48,7 @@ export class AdminStoresController {
             status,
             note,
             { actor: audit.actor, reason: audit.reason },
+            Boolean(force),
         );
         return res.status(result.success ? 200 : 400).json(result);
     }

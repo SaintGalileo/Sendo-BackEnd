@@ -291,7 +291,111 @@ export class AdminTransactionsService {
     }
 
     async getStoreWithdrawals(filters: PaginationFilters) {
+        const { from, to, page, limit } = buildPagination(filters.page, filters.limit);
+
+        let query = supabase
+            .from('withdrawal_requests')
+            .select('*', { count: 'exact' })
+            .order('created_at', { ascending: false })
+            .range(from, to);
+
+        query = applyDateRange(query, filters.dateFrom, filters.dateTo);
+        if (filters.status && filters.status !== 'all') {
+            query = query.eq('status', filters.status.toLowerCase());
+        }
+
+        const res = await query;
+        if (!res.error) {
+            const rawRows = res.data || [];
+            const merchantIds = Array.from(
+                new Set(rawRows.map((r: any) => r.merchant_id).filter(Boolean))
+            );
+            const merchantMap: Record<string, any> = {};
+            if (merchantIds.length > 0) {
+                const { data: merchantsData } = await supabase
+                    .from('merchants')
+                    .select('id, name, phone, contact_email, logo_url')
+                    .in('id', merchantIds);
+                for (const m of merchantsData || []) {
+                    merchantMap[m.id] = m;
+                }
+            }
+
+            const enriched = rawRows.map((r: any) => {
+                const m = r.merchant_id ? merchantMap[r.merchant_id] : null;
+                return {
+                    ...r,
+                    merchant: m?.name || r.merchant || r.store_name || r.account_name || 'Merchant',
+                    store_name: m?.name || r.store_name || r.merchant || 'Merchant',
+                    merchant_phone: m?.phone || null,
+                    merchant_email: m?.contact_email || null,
+                    merchant_logo: m?.logo_url || null,
+                };
+            });
+
+            const total = res.count || 0;
+            return {
+                success: true as const,
+                data: enriched,
+                pagination: { page, limit, total, totalPages: Math.ceil(total / limit) || 0 },
+            };
+        }
+
         return queryWithdrawTable('store', filters);
+    }
+
+    async updateStoreWithdrawalStatus(id: string, status: string, reason?: string | null) {
+        const normalized = String(status || '').trim().toLowerCase();
+        if (!['approved', 'paid', 'rejected', 'denied', 'pending'].includes(normalized)) {
+            return { success: false, message: 'Invalid withdrawal status', data: null };
+        }
+        const finalStatus = normalized === 'denied' ? 'rejected' : normalized;
+
+        const { data: existing, error: findErr } = await supabase
+            .from('withdrawal_requests')
+            .select('*')
+            .eq('id', id)
+            .maybeSingle();
+
+        if (findErr || !existing) {
+            return { success: false, message: findErr?.message || 'Withdrawal request not found', data: null };
+        }
+
+        const updates: Record<string, unknown> = {
+            status: finalStatus,
+            updated_at: new Date().toISOString(),
+        };
+        if (reason && reason.trim()) {
+            updates.rejection_reason = reason.trim();
+        }
+
+        let { data, error } = await supabase
+            .from('withdrawal_requests')
+            .update(updates)
+            .eq('id', id)
+            .select('*')
+            .single();
+
+        if (error && (error as any).code === 'PGRST204') {
+            const retry = await supabase
+                .from('withdrawal_requests')
+                .update({ status: finalStatus })
+                .eq('id', id)
+                .select('*')
+                .single();
+            data = retry.data;
+            error = retry.error;
+        }
+
+        if (error) {
+            return { success: false, message: error.message, data: null };
+        }
+
+        return {
+            success: true,
+            message: `Withdrawal request marked as ${finalStatus}`,
+            data,
+        };
     }
 
     async getCourierWithdrawals(filters: PaginationFilters) {

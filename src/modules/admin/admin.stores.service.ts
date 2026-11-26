@@ -1,4 +1,6 @@
+import axios from 'axios';
 import { supabase } from '../../config/supabase';
+import { EmailService } from '../notifications/email.service';
 import { moduleToMerchantTypes, COMMERCIAL_MERCHANT_TYPES } from './moduleMerchantTypes';
 import { normalizeScope } from './admin.scope';
 import {
@@ -316,6 +318,7 @@ export class AdminStoresService {
         status: string,
         reason?: string | null,
         audit?: { actor: AuditActor; reason: string },
+        force = false,
     ) {
         const normalized = String(status || '').trim().toLowerCase();
 
@@ -329,14 +332,11 @@ export class AdminStoresService {
         }
 
         const updates: Record<string, unknown> = {};
+        const isVerifyAction = normalized === 'verified' || normalized === 'active' || normalized === 'approved';
+        const wasAlreadyVerified = Boolean(existing.verified_at) || String(existing.status || '').toLowerCase() === 'verified';
 
-        if (normalized === 'verified' || normalized === 'active' || normalized === 'approved') {
-            if (existing.verified_at) {
-                updates.status = 'verified';
-                updates.verification_status = 'verified';
-                updates.verified = true;
-                updates.verification_rejection_reason = null;
-            } else {
+        if (isVerifyAction) {
+            if (!existing.verified_at && !force) {
                 const check = isVerificationComplete(existing);
                 if (!check.ok) {
                     return {
@@ -345,12 +345,12 @@ export class AdminStoresService {
                         data: null,
                     };
                 }
-                updates.status = 'verified';
-                updates.verification_status = 'verified';
-                updates.verified = true;
-                updates.verified_at = new Date().toISOString();
-                updates.verification_rejection_reason = null;
             }
+            updates.status = 'verified';
+            updates.verification_status = 'verified';
+            updates.verified = true;
+            updates.verified_at = existing.verified_at || new Date().toISOString();
+            updates.verification_rejection_reason = null;
         } else if (normalized === 'rejected' || normalized === 'denied') {
             const why = requireAuditReason(reason);
             if (!why) {
@@ -424,7 +424,65 @@ export class AdminStoresService {
             }
         }
 
+        if (isVerifyAction && (!wasAlreadyVerified || force)) {
+            await this.notifyMerchantVerified(data).catch((err) => {
+                console.warn('[updateStoreStatus] Failed to send verification notifications:', err?.message || err);
+            });
+        }
+
         return { success: true, message: 'Store status updated', data };
+    }
+
+    private async notifyMerchantVerified(store: any): Promise<void> {
+        let owner: { email?: string | null; phone?: string | null; first_name?: string | null } | null = null;
+        if (store.user_id) {
+            const { data: userData } = await supabase
+                .from('users')
+                .select('email, phone, first_name')
+                .eq('id', store.user_id)
+                .maybeSingle();
+            owner = userData;
+        }
+
+        const storeName = store.name || 'your store';
+        const ownerName = owner?.first_name?.trim() || storeName;
+        const targetEmail = owner?.email || store.contact_email || store.email;
+        const targetPhone = owner?.phone || store.phone || store.contact_phone;
+
+        if (targetPhone) {
+            const termiiApiKey = process.env.TERMII_API_KEY;
+            if (termiiApiKey) {
+                try {
+                    const cleanPhone = String(targetPhone).startsWith('+')
+                        ? String(targetPhone).substring(1)
+                        : (String(targetPhone).startsWith('0') ? '234' + String(targetPhone).substring(1) : String(targetPhone));
+                    await axios.post('https://api.ng.termii.com/api/sms/send', {
+                        to: cleanPhone,
+                        from: process.env.TERMII_SENDER_ID || 'N-Alert',
+                        sms: `Congratulations! Your Sendo store "${storeName}" has been verified. You can now go online and start selling on Sendo!`,
+                        type: 'plain',
+                        channel: 'generic',
+                        api_key: termiiApiKey,
+                    });
+                } catch (smsErr: any) {
+                    console.error('[MERCHANT VERIFIED SMS] Termii error:', smsErr.response?.data || smsErr.message);
+                }
+            } else {
+                console.warn(`[MERCHANT VERIFIED SMS] TERMII_API_KEY missing; skipped SMS to ${targetPhone}`);
+            }
+        }
+
+        if (targetEmail) {
+            const emailService = new EmailService();
+            await emailService.sendEmail(
+                targetEmail,
+                `Your Store ${storeName} Is Now Verified on Sendo!`,
+                `<p>Hello ${ownerName},</p>
+                 <p>Great news! Your store <strong>${storeName}</strong> has been verified by the Sendo team.</p>
+                 <p>You can now go online in the Sendo Vendor app and start receiving orders and selling on the platform.</p>
+                 <p>Welcome aboard,<br/>The Sendo Team</p>`
+            );
+        }
     }
 
     async updateStore(

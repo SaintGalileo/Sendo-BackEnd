@@ -139,6 +139,7 @@ router.get('/transactions/report', transactionsCtrl.getTransactionReport);
 router.get('/transactions/account', transactionsCtrl.getAccountTransactions);
 router.post('/transactions/account', transactionsCtrl.createAccountTransaction);
 router.get('/transactions/store/withdrawals', transactionsCtrl.getStoreWithdrawals);
+router.put('/transactions/store/withdrawals/:id/status', transactionsCtrl.updateStoreWithdrawalStatus);
 router.get('/transactions/courier/withdrawals', transactionsCtrl.getCourierWithdrawals);
 router.get('/transactions/store-disbursements', transactionsCtrl.getStoreDisbursements);
 router.get('/transactions/courier-disbursements', transactionsCtrl.getCourierDisbursements);
