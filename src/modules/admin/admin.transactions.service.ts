@@ -1,4 +1,7 @@
 import { supabase } from '../../config/supabase';
+import { MerchantEarningsService } from '../merchant/earnings.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { EmailService } from '../notifications/email.service';
 
 interface PaginationFilters {
     page?: number;
@@ -361,6 +364,22 @@ export class AdminTransactionsService {
             return { success: false, message: findErr?.message || 'Withdrawal request not found', data: null };
         }
 
+        const wasAlreadyPaid = ['approved', 'paid'].includes(String(existing.status || '').toLowerCase());
+        const isApproving = ['approved', 'paid'].includes(finalStatus);
+
+        if (isApproving && !wasAlreadyPaid && existing.merchant_id) {
+            try {
+                const earningsService = new MerchantEarningsService();
+                await earningsService.debitBalance(existing.merchant_id, Number(existing.amount || 0));
+            } catch (debitErr: any) {
+                return {
+                    success: false,
+                    message: debitErr?.message || 'Failed to debit merchant earnings balance',
+                    data: null,
+                };
+            }
+        }
+
         const updates: Record<string, unknown> = {
             status: finalStatus,
             updated_at: new Date().toISOString(),
@@ -391,11 +410,93 @@ export class AdminTransactionsService {
             return { success: false, message: error.message, data: null };
         }
 
+        if (isApproving && !wasAlreadyPaid) {
+            await this.notifyWithdrawalApproved(data).catch((err) => {
+                console.warn('[updateStoreWithdrawalStatus] Notification warning:', err?.message || err);
+            });
+        }
+
         return {
             success: true,
             message: `Withdrawal request marked as ${finalStatus}`,
             data,
         };
+    }
+
+    private async notifyWithdrawalApproved(withdrawal: any): Promise<void> {
+        const amountNum = Number(withdrawal.amount || 0);
+        const formattedAmount = `₦${amountNum.toLocaleString('en-NG', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        })}`;
+        const bankName = withdrawal.bank_name || 'your bank account';
+        const accountNumber = withdrawal.account_number || '';
+        const accountName = withdrawal.account_name || '';
+
+        if (withdrawal.merchant_id) {
+            const notificationsService = new NotificationsService();
+            await notificationsService.sendPushNotificationToMerchant(
+                withdrawal.merchant_id,
+                'Payout Approved & Sent',
+                `Your withdrawal of ${formattedAmount} to ${bankName}${accountNumber ? ` (${accountNumber})` : ''} has been processed.`,
+                {
+                    type: 'withdrawal_approved',
+                    withdrawalId: withdrawal.id,
+                    amount: amountNum,
+                }
+            );
+        }
+
+        let storeName = withdrawal.store_name || 'your store';
+        let targetEmail = withdrawal.email || '';
+        let firstName = '';
+
+        if (withdrawal.merchant_id) {
+            const { data: store } = await supabase
+                .from('merchants')
+                .select('name, contact_email, user_id')
+                .eq('id', withdrawal.merchant_id)
+                .maybeSingle();
+            if (store) {
+                storeName = store.name || storeName;
+                targetEmail = targetEmail || store.contact_email || '';
+                if (store.user_id) {
+                    const { data: user } = await supabase
+                        .from('users')
+                        .select('email, first_name')
+                        .eq('id', store.user_id)
+                        .maybeSingle();
+                    if (user) {
+                        targetEmail = user.email || targetEmail;
+                        firstName = user.first_name || '';
+                    }
+                }
+            }
+        }
+
+        if (targetEmail) {
+            const emailService = new EmailService();
+            const greetingName = firstName.trim() || storeName;
+            const dateStr = new Date().toLocaleDateString('en-NG', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+            });
+            await emailService.sendEmail(
+                targetEmail,
+                `Payout Processed — ${formattedAmount} Sent`,
+                `<p>Hello ${greetingName},</p>
+                 <p>Your withdrawal request for <strong>${storeName}</strong> has been approved and processed.</p>
+                 <table style="width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px;">
+                   <tr><td style="padding: 8px 0; color: #64748B;">Amount</td><td style="padding: 8px 0; text-align: right; font-weight: 700; color: #0F172A;">${formattedAmount}</td></tr>
+                   <tr><td style="padding: 8px 0; color: #64748B;">Bank</td><td style="padding: 8px 0; text-align: right; color: #0F172A;">${bankName}</td></tr>
+                   <tr><td style="padding: 8px 0; color: #64748B;">Account Number</td><td style="padding: 8px 0; text-align: right; color: #0F172A;">${accountNumber || '—'}</td></tr>
+                   <tr><td style="padding: 8px 0; color: #64748B;">Account Name</td><td style="padding: 8px 0; text-align: right; color: #0F172A;">${accountName || '—'}</td></tr>
+                   <tr><td style="padding: 8px 0; color: #64748B;">Date</td><td style="padding: 8px 0; text-align: right; color: #0F172A;">${dateStr}</td></tr>
+                 </table>
+                 <p style="color: #64748B; font-size: 13px;">Your store earnings balance has been updated accordingly.</p>`
+            );
+        }
     }
 
     async getCourierWithdrawals(filters: PaginationFilters) {

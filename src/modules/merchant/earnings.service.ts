@@ -43,6 +43,31 @@ export class MerchantEarningsService {
         return data;
     }
 
+    async debitBalance(merchantId: string, amount: number) {
+        const debitAmount = Number(amount);
+        if (!Number.isFinite(debitAmount) || debitAmount <= 0) {
+            throw new Error('Invalid debit amount');
+        }
+        const earnings = await this.getOrCreateEarnings(merchantId);
+        const current = Number(earnings.current_balance || 0);
+        if (current < debitAmount) {
+            throw new Error(
+                `Insufficient merchant balance (available: ₦${current.toLocaleString()}, requested: ₦${debitAmount.toLocaleString()})`
+            );
+        }
+
+        const newBalance = Number((current - debitAmount).toFixed(2));
+        const { data, error } = await supabase
+            .from('merchant_earnings')
+            .update({ current_balance: newBalance })
+            .eq('id', earnings.id)
+            .select()
+            .single();
+
+        if (error) throw new Error(error.message);
+        return data;
+    }
+
     async getHistory(merchantId: string) {
         // We could also have a 'merchant_transactions' table for more detail
         // For now, return the current state
