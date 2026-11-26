@@ -758,25 +758,26 @@ export class MerchantOnboardingService {
             throw new Error(`Insufficient wallet balance. Available balance: ₦${availableBalance.toLocaleString()}`);
         }
 
-        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-
-        try {
-            await supabase.from('otps').insert([{
-                user_id: userId,
-                otp: otpCode,
-                expires_at: expiresAt,
-                type: 'withdrawal_otp'
-            }]);
-        } catch (otpErr) {
-            console.warn('[initiateWithdrawal] OTP insert warning:', otpErr);
-        }
-
         const { data: user } = await supabase.from('users').select('email, phone, first_name').eq('id', userId).single();
         const targetEmail = user?.email || store.contact_email;
         const targetPhone = user?.phone || store.phone || store.contact_phone;
+        const otpKey = targetPhone || `withdrawal:${userId}`;
 
-        // 1. Send SMS via Termii
+        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+        const { error: otpInsertErr } = await supabase.from('otps').insert([{
+            phone: otpKey,
+            otp_code: otpCode,
+            expires_at: expiresAt,
+            is_verified: false,
+        }]);
+        if (otpInsertErr) {
+            console.error('[initiateWithdrawal] OTP insert error:', otpInsertErr.message);
+            throw new Error('Failed to generate verification OTP. Please try again.');
+        }
+
+        // 1. Send SMS via Termii (use dnd channel & Sendo sender ID like authService)
         if (targetPhone) {
             try {
                 const termiiApiKey = process.env.TERMII_API_KEY;
@@ -785,15 +786,15 @@ export class MerchantOnboardingService {
                         ? targetPhone.substring(1)
                         : (targetPhone.startsWith('0') ? '234' + targetPhone.substring(1) : targetPhone);
 
-                    await axios.post('https://api.ng.termii.com/api/sms/send', {
+                    const smsRes = await axios.post('https://api.ng.termii.com/api/sms/send', {
                         to: cleanPhone,
-                        from: process.env.TERMII_SENDER_ID || 'N-Alert',
+                        from: process.env.TERMII_SENDER_ID || 'Sendo',
                         sms: `Your Sendo payout withdrawal verification code is ${otpCode}. Valid for 10 minutes.`,
                         type: 'plain',
-                        channel: 'generic',
+                        channel: 'dnd',
                         api_key: termiiApiKey,
                     });
-                    console.log(`[WITHDRAWAL SMS] OTP sent via Termii SMS to ${cleanPhone}`);
+                    console.log(`[WITHDRAWAL SMS] OTP sent via Termii SMS to ${cleanPhone}:`, smsRes.data);
                 } else {
                     console.warn(`[WITHDRAWAL SMS] TERMII_API_KEY missing. SMS logged: ${otpCode} for ${targetPhone}`);
                 }
@@ -827,23 +828,38 @@ export class MerchantOnboardingService {
     }
 
     async confirmWithdrawal(merchantId: string, userId: string, amount: number, otpCode: string) {
-        const { data: otpRecords } = await supabase
-            .from('otps')
-            .select('*')
-            .eq('user_id', userId)
-            .order('created_at', { ascending: false })
-            .limit(1);
-
-        const latestOtp = otpRecords && otpRecords[0];
-        if (!latestOtp || latestOtp.otp !== otpCode.trim()) {
-            throw new Error('Invalid verification OTP code. Please check and try again.');
-        }
-
         const { data: store } = await supabase
             .from('merchants')
             .select('*')
             .eq('id', merchantId)
             .single();
+
+        const { data: user } = await supabase
+            .from('users')
+            .select('phone')
+            .eq('id', userId)
+            .maybeSingle();
+
+        const otpKeys = Array.from(
+            new Set(
+                [user?.phone, store?.phone, store?.contact_phone, `withdrawal:${userId}`].filter(Boolean) as string[]
+            )
+        );
+
+        const { data: otpRecords } = await supabase
+            .from('otps')
+            .select('*')
+            .in('phone', otpKeys)
+            .eq('otp_code', otpCode.trim())
+            .eq('is_verified', false)
+            .gt('expires_at', new Date().toISOString())
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+        const latestOtp = otpRecords && otpRecords[0];
+        if (!latestOtp) {
+            throw new Error('Invalid or expired verification OTP code. Please check and try again.');
+        }
 
         const accountNumber = store?.account_number || store?.payout_account?.account_number || '';
         const bankCode = store?.bank_code || store?.payout_account?.bank_code || '';
@@ -872,7 +888,7 @@ export class MerchantOnboardingService {
         }
 
         try {
-            await supabase.from('otps').delete().eq('id', latestOtp.id);
+            await supabase.from('otps').update({ is_verified: true }).eq('id', latestOtp.id);
         } catch (e) {}
 
         return withdrawal;
