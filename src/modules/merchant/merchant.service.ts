@@ -161,6 +161,22 @@ export class MerchantOnboardingService {
     async updateStore(merchantId: string, updateData: any) {
         const patch: Record<string, any> = { ...updateData };
 
+        if (patch.serviceAreas !== undefined && patch.service_areas === undefined) {
+            patch.service_areas = patch.serviceAreas;
+        }
+        delete patch.serviceAreas;
+
+        if (Array.isArray(patch.service_areas)) {
+            patch.service_areas = patch.service_areas
+                .filter((sa: any) => sa && sa.state && sa.city)
+                .map((sa: any) => ({
+                    country: String(sa.country || 'Nigeria').trim(),
+                    state: String(sa.state).trim(),
+                    city: String(sa.city).trim(),
+                    ...(sa.area && String(sa.area).trim() ? { area: String(sa.area).trim() } : {}),
+                }));
+        }
+
         // Handle categories array updates — sync the legacy `type` column.
         if (patch.categories !== undefined) {
             if (Array.isArray(patch.categories)) {

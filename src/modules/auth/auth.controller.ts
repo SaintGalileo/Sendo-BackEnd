@@ -76,6 +76,7 @@ export class AuthController {
             address,
             city,
             state,
+            area,
             postalCode,
             country,
             latitude,
@@ -93,7 +94,9 @@ export class AuthController {
             preparationTime,
             deliveryFee,
             email, // This is for the user account email
-            categories // New: array of category strings
+            categories, // New: array of category strings
+            serviceAreas,
+            service_areas
         } = req.body || {};
 
         if (!registrationToken || !firstName || !lastName || !storeName || (!merchantType && (!categories || !Array.isArray(categories) || categories.length === 0))) {
@@ -131,7 +134,9 @@ export class AuthController {
             preparationTime,
             deliveryFee,
             email,
-            categories
+            categories,
+            area,
+            serviceAreas || service_areas
         );
         return res.status(result.success ? 201 : 400).json(result);
     }

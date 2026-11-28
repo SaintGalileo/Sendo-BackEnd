@@ -382,7 +382,9 @@ export class AuthService {
         preparationTime: string = '15-25',
         deliveryFee: number = 0,
         email?: string,
-        categories?: string[]
+        categories?: string[],
+        area?: string,
+        serviceAreas?: Array<{ country?: string; state: string; city: string; area?: string }>
     ): Promise<{ success: boolean; message: string; data?: any; token?: string }> {
         const decoded = this.verifyRegistrationToken(registrationToken);
         if (!decoded) return { success: false, message: 'Invalid registration token. Please verify your phone number again.' };
@@ -445,6 +447,28 @@ export class AuthService {
             userData = data;
         }
 
+        const normalizedCountry = (country && country.trim()) || 'Nigeria';
+        const normalizedServiceAreas =
+            Array.isArray(serviceAreas) && serviceAreas.length > 0
+                ? serviceAreas
+                      .filter((sa) => sa && sa.state && sa.city)
+                      .map((sa) => ({
+                          country: (sa.country && sa.country.trim()) || normalizedCountry,
+                          state: sa.state.trim(),
+                          city: sa.city.trim(),
+                          ...(sa.area && sa.area.trim() ? { area: sa.area.trim() } : {}),
+                      }))
+                : state && city
+                ? [
+                      {
+                          country: normalizedCountry,
+                          state: state.trim(),
+                          city: city.trim(),
+                          ...(area && area.trim() ? { area: area.trim() } : {}),
+                      },
+                  ]
+                : [];
+
         // 2. Insert Merchant sub-profile (multi-merchant: no upsert by user_id)
         const { data: merchantData, error: merchantError } = await supabase
             .from('merchants')
@@ -463,10 +487,12 @@ export class AuthService {
                     address,
                     city,
                     state,
+                    area: area ? area.trim() : null,
                     postal_code: postalCode,
-                    country,
-                    latitude,
-                    longitude,
+                    country: normalizedCountry,
+                    service_areas: normalizedServiceAreas,
+                    latitude: latitude ?? 0,
+                    longitude: longitude ?? 0,
                     logo_url: logoUri,
                     banner_url: bannerUri,
                     opening_time: openingTime,

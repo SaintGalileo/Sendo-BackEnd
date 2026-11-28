@@ -142,11 +142,52 @@ function annotateAvailability(stores: any[]) {
     }));
 }
 
+function matchesServiceArea(
+    store: any,
+    target: { state?: string; city?: string; area?: string; country?: string }
+): boolean {
+    const tState = target.state?.trim().toLowerCase();
+    const tCity = target.city?.trim().toLowerCase();
+    const tArea = target.area?.trim().toLowerCase();
+
+    if (!tState && !tCity) return true;
+
+    const areas: any[] = Array.isArray(store.service_areas) ? store.service_areas : [];
+    if (areas.length > 0) {
+        return areas.some((sa) => {
+            if (!sa || typeof sa !== 'object') return false;
+            const sState = String(sa.state || '').trim().toLowerCase();
+            const sCity = String(sa.city || '').trim().toLowerCase();
+            const sArea = String(sa.area || '').trim().toLowerCase();
+
+            if (tState && sState !== tState) return false;
+            if (tCity && sCity !== tCity) return false;
+            // If vendor left `area` empty, they serve the whole city; otherwise match area too.
+            if (tArea && sArea && sArea !== tArea) return false;
+            return true;
+        });
+    }
+
+    // Legacy fallback when service_areas is empty
+    const mState = String(store.state || '').trim().toLowerCase();
+    const mCity = String(store.city || '').trim().toLowerCase();
+    const mArea = String(store.area || '').trim().toLowerCase();
+    if (tState && mState !== tState) return false;
+    if (tCity && mCity !== tCity) return false;
+    if (tArea && mArea && mArea !== tArea) return false;
+    return true;
+}
+
 export class StoresService {
     private readonly allowedStoreTypes = COMMERCIAL_MERCHANT_TYPES;
 
     async getStores(filters: any, pagination: any) {
-        const hasGeo = filters.lat != null && filters.lng != null &&
+        const hasManualLocation = Boolean(
+            (filters.state && String(filters.state).trim()) ||
+            (filters.city && String(filters.city).trim())
+        );
+        const hasGeo = !hasManualLocation &&
+            filters.lat != null && filters.lng != null &&
             !isNaN(parseFloat(filters.lat)) && !isNaN(parseFloat(filters.lng));
 
         let query = supabase
@@ -163,12 +204,31 @@ export class StoresService {
             query = query.gte('rating', parseFloat(filters.rating));
         }
 
-        if (filters.city) {
-            query = query.ilike('city', `%${filters.city}%`);
-        }
-
         if (filters.search) {
             query = query.ilike('name', `%${filters.search}%`);
+        }
+
+        // Manual service-area filtering takes precedence over GPS radius filtering
+        if (hasManualLocation) {
+            query = query.limit(GEO_POOL_LIMIT);
+            const { data, error } = await query;
+            if (error) throw new Error(error.message);
+
+            const filtered = annotateAvailability(data || []).filter((store) =>
+                matchesServiceArea(store, {
+                    state: filters.state,
+                    city: filters.city,
+                    area: filters.area,
+                    country: filters.country,
+                })
+            );
+
+            const from = pagination.offset;
+            const to = from + pagination.limit;
+            return {
+                data: filtered.slice(from, to),
+                totalCount: filtered.length,
+            };
         }
 
         // When geo filtering, fetch a pool first, filter by delivery_radius, then paginate.
@@ -207,8 +267,8 @@ export class StoresService {
     }
 
     /**
-     * Nearby stores for a delivery pin.
-     * Prefers explicit lat/lng (selected delivery address). Falls back to DB default address.
+     * Stores for a customer's selected location.
+     * Prefers explicit state/city/area, then lat/lng, then DB default address.
      */
     async getNearbyStores(
         userId: string,
@@ -217,23 +277,46 @@ export class StoresService {
         lat?: string,
         lng?: string,
         addressId?: string,
+        manualLoc?: { state?: string; city?: string; area?: string; country?: string },
     ) {
-        const coords = await this.resolveDeliveryCoords(userId, lat, lng, addressId);
-        if (!coords) {
-            throw new Error('No delivery address found. Please set a delivery address.');
+        if (manualLoc?.state || manualLoc?.city) {
+            return this.getStores(
+                {
+                    state: manualLoc.state,
+                    city: manualLoc.city,
+                    area: manualLoc.area,
+                    country: manualLoc.country,
+                    type,
+                },
+                pagination,
+            );
+        }
+
+        const resolved = await this.resolveDeliveryCoords(userId, lat, lng, addressId);
+        if (!resolved) {
+            throw new Error('No delivery location selected. Please choose your state and city.');
         }
 
         return this.getStores(
             {
-                lat: String(coords.lat),
-                lng: String(coords.lng),
+                state: resolved.state,
+                city: resolved.city,
+                area: resolved.area,
+                lat: resolved.lat != null ? String(resolved.lat) : undefined,
+                lng: resolved.lng != null ? String(resolved.lng) : undefined,
                 type,
             },
             pagination,
         );
     }
 
-    async getFeaturedStores(pagination: any, lat?: string, lng?: string, type?: string) {
+    async getFeaturedStores(
+        pagination: any,
+        lat?: string,
+        lng?: string,
+        type?: string,
+        manualLoc?: { state?: string; city?: string; area?: string; country?: string },
+    ) {
         const cacheKey = (type || 'all').toLowerCase().trim();
         let entry = featuredPoolCache.get(cacheKey);
         if (!entry || Date.now() - entry.at > FEATURED_POOL_TTL_MS) {
@@ -260,9 +343,14 @@ export class StoresService {
 
         let stores = annotateAvailability(data || []);
 
-        if (lat && lng && !isNaN(parseFloat(lat)) && !isNaN(parseFloat(lng))) {
+        if (manualLoc?.state || manualLoc?.city) {
+            stores = stores.filter((store) => matchesServiceArea(store, manualLoc));
+            for (let i = stores.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [stores[i], stores[j]] = [stores[j], stores[i]];
+            }
+        } else if (lat && lng && !isNaN(parseFloat(lat)) && !isNaN(parseFloat(lng))) {
             stores = this.filterAndSortByDeliveryReach(stores, parseFloat(lat), parseFloat(lng));
-            // Soft shuffle among nearest only — keeps local relevance
             const near = stores.slice(0, FEATURED_SHUFFLE_POOL);
             const rest = stores.slice(FEATURED_SHUFFLE_POOL);
             for (let i = near.length - 1; i > 0; i--) {
@@ -289,17 +377,33 @@ export class StoresService {
         lat?: string,
         lng?: string,
         addressId?: string,
+        manualLoc?: { state?: string; city?: string; area?: string; country?: string },
     ) {
-        const coords = await this.resolveDeliveryCoords(userId, lat, lng, addressId);
-        if (!coords) {
-            throw new Error('No delivery address found. Please set a delivery address.');
+        if (manualLoc?.state || manualLoc?.city) {
+            return this.getStores(
+                {
+                    state: manualLoc.state,
+                    city: manualLoc.city,
+                    area: manualLoc.area,
+                    country: manualLoc.country,
+                    type,
+                },
+                pagination,
+            );
+        }
+
+        const resolved = await this.resolveDeliveryCoords(userId, lat, lng, addressId);
+        if (!resolved) {
+            throw new Error('No delivery location selected. Please choose your state and city.');
         }
 
         return this.getStores(
             {
-                city: coords.city,
-                lat: String(coords.lat),
-                lng: String(coords.lng),
+                state: resolved.state,
+                city: resolved.city,
+                area: resolved.area,
+                lat: resolved.lat != null ? String(resolved.lat) : undefined,
+                lng: resolved.lng != null ? String(resolved.lng) : undefined,
                 type,
             },
             pagination,
@@ -423,22 +527,26 @@ export class StoresService {
         lat?: string,
         lng?: string,
         addressId?: string,
-    ): Promise<{ lat: number; lng: number; city?: string } | null> {
+    ): Promise<{ lat?: number; lng?: number; city?: string; state?: string; area?: string } | null> {
         const qLat = lat != null ? parseFloat(lat) : NaN;
         const qLng = lng != null ? parseFloat(lng) : NaN;
 
         if (!isNaN(qLat) && !isNaN(qLng)) {
             let city: string | undefined;
+            let state: string | undefined;
+            let area: string | undefined;
             if (addressId) {
                 const { data: addr } = await supabase
                     .from('addresses')
-                    .select('city')
+                    .select('city, state, area')
                     .eq('id', addressId)
                     .eq('user_id', userId)
                     .maybeSingle();
                 city = addr?.city || undefined;
+                state = addr?.state || undefined;
+                area = addr?.area || undefined;
             }
-            return { lat: qLat, lng: qLng, city };
+            return { lat: qLat, lng: qLng, city, state, area };
         }
 
         let query = supabase
@@ -458,8 +566,15 @@ export class StoresService {
         const address = addresses[0];
         const aLat = Number(address.latitude);
         const aLng = Number(address.longitude);
-        if (isNaN(aLat) || isNaN(aLng)) return null;
+        const hasCoords = !isNaN(aLat) && !isNaN(aLng) && (aLat !== 0 || aLng !== 0);
+        if (!hasCoords && !address.city && !address.state) return null;
 
-        return { lat: aLat, lng: aLng, city: address.city || undefined };
+        return {
+            lat: hasCoords ? aLat : undefined,
+            lng: hasCoords ? aLng : undefined,
+            city: address.city || undefined,
+            state: address.state || undefined,
+            area: address.area || undefined,
+        };
     }
 }

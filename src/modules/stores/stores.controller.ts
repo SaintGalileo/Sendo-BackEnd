@@ -10,7 +10,7 @@ export class StoresController {
     async getStores(req: Request, res: Response) {
         try {
             const pagination = getPaginationOptions(req.query);
-            const { type, lat, lng, rating, q, city } = req.query;
+            const { type, lat, lng, rating, q, city, state, area, country } = req.query;
 
             const filters = {
                 type: type as string,
@@ -19,6 +19,9 @@ export class StoresController {
                 rating: rating as string,
                 search: q as string, // for /stores/search alias or normal query
                 city: city as string,
+                state: state as string,
+                area: area as string,
+                country: country as string,
             };
 
             const result = await storesService.getStores(filters, pagination);
@@ -37,7 +40,7 @@ export class StoresController {
     async getNearbyStores(req: AuthRequest, res: Response) {
         try {
             const pagination = getPaginationOptions(req.query);
-            const { type, lat, lng, addressId } = req.query;
+            const { type, lat, lng, addressId, state, city, area, country } = req.query;
             const result = await storesService.getNearbyStores(
                 req.user.id,
                 pagination,
@@ -45,6 +48,12 @@ export class StoresController {
                 lat as string | undefined,
                 lng as string | undefined,
                 addressId as string | undefined,
+                {
+                    state: state as string | undefined,
+                    city: city as string | undefined,
+                    area: area as string | undefined,
+                    country: country as string | undefined,
+                },
             );
             return sendResponse(
                 res,
@@ -61,8 +70,19 @@ export class StoresController {
     async getFeaturedStores(req: Request, res: Response) {
         try {
             const pagination = getPaginationOptions(req.query);
-            const { lat, lng, type } = req.query;
-            const result = await storesService.getFeaturedStores(pagination, lat as string, lng as string, type as string | undefined);
+            const { lat, lng, type, state, city, area, country } = req.query;
+            const result = await storesService.getFeaturedStores(
+                pagination,
+                lat as string,
+                lng as string,
+                type as string | undefined,
+                {
+                    state: state as string | undefined,
+                    city: city as string | undefined,
+                    area: area as string | undefined,
+                    country: country as string | undefined,
+                },
+            );
             return sendResponse(
                 res,
                 200,
@@ -78,7 +98,7 @@ export class StoresController {
     async getStoresByCity(req: AuthRequest, res: Response) {
         try {
             const pagination = getPaginationOptions(req.query);
-            const { type, lat, lng, addressId } = req.query;
+            const { type, lat, lng, addressId, state, city, area, country } = req.query;
             const result = await storesService.getStoresByCity(
                 req.user.id,
                 pagination,
@@ -86,6 +106,12 @@ export class StoresController {
                 lat as string | undefined,
                 lng as string | undefined,
                 addressId as string | undefined,
+                {
+                    state: state as string | undefined,
+                    city: city as string | undefined,
+                    area: area as string | undefined,
+                    country: country as string | undefined,
+                },
             );
             return sendResponse(
                 res,
